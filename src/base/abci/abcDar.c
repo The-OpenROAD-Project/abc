@@ -658,6 +658,33 @@ Abc_Ntk_t * Abc_NtkFromAigPhase( Aig_Man_t * pMan )
 }
 
 
+/**Function*************************************************************
+
+  Synopsis    []
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+int Abc_NtkFromGiaCollapse( Gia_Man_t * pGia )
+{
+    Aig_Man_t * pMan = Gia_ManToAig( pGia, 0 ); int Res;
+    Abc_Ntk_t * pNtk = Abc_NtkFromAigPhase( pMan ), * pTemp;
+    //pNtk->pName      = Extra_UtilStrsav(pGia->pName);
+    Aig_ManStop( pMan );
+    // collapse the network 
+    pNtk = Abc_NtkCollapse( pTemp = pNtk, 10000, 0, 1, 0, 0, 0 );
+    Abc_NtkDelete( pTemp );
+    if ( pNtk == NULL )
+        return 0;
+    Res = Abc_NtkGetBddNodeNum( pNtk );
+    Abc_NtkDelete( pNtk );
+    return Res == 0;
+}
+
 
 /**Function*************************************************************
 
@@ -2275,7 +2302,7 @@ Abc_Ntk_t * Abc_NtkDarLcorr( Abc_Ntk_t * pNtk, int nFramesP, int nConfMax, int f
   SeeAlso     []
  
 ***********************************************************************/
-Abc_Ntk_t * Abc_NtkDarLcorrNew( Abc_Ntk_t * pNtk, int nVarsMax, int nConfMax, int fVerbose )
+Abc_Ntk_t * Abc_NtkDarLcorrNew( Abc_Ntk_t * pNtk, int nVarsMax, int nConfMax, int nLimitMax, int fVerbose )
 {
     Ssw_Pars_t Pars, * pPars = &Pars;
     Aig_Man_t * pMan, * pTemp;
@@ -2287,6 +2314,7 @@ Abc_Ntk_t * Abc_NtkDarLcorrNew( Abc_Ntk_t * pNtk, int nVarsMax, int nConfMax, in
     pPars->fLatchCorrOpt = 1;
     pPars->nBTLimit      = nConfMax;
     pPars->nSatVarMax    = nVarsMax;
+    pPars->nLimitMax     = nLimitMax;
     pPars->fVerbose      = fVerbose;
     pMan = Ssw_SignalCorrespondence( pTemp = pMan, pPars );
     Aig_ManStop( pTemp );

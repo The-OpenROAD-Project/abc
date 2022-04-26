@@ -21,7 +21,7 @@
 #include "wlc.h"
 #include "base/wln/wln.h"
 #include "base/main/mainInt.h"
-#include "aig/miniaig/ndr.h"
+//#include "aig/miniaig/ndr.h"
 
 ABC_NAMESPACE_IMPL_START
 
@@ -32,7 +32,6 @@ ABC_NAMESPACE_IMPL_START
 
 static int  Abc_CommandReadWlc    ( Abc_Frame_t * pAbc, int argc, char ** argv );
 static int  Abc_CommandWriteWlc   ( Abc_Frame_t * pAbc, int argc, char ** argv );
-static int  Abc_CommandYosys      ( Abc_Frame_t * pAbc, int argc, char ** argv );
 static int  Abc_CommandPs         ( Abc_Frame_t * pAbc, int argc, char ** argv );
 static int  Abc_CommandCone       ( Abc_Frame_t * pAbc, int argc, char ** argv );
 static int  Abc_CommandAbs        ( Abc_Frame_t * pAbc, int argc, char ** argv );
@@ -80,7 +79,6 @@ void Wlc_Init( Abc_Frame_t * pAbc )
 {
     Cmd_CommandAdd( pAbc, "Word level", "%read",        Abc_CommandReadWlc,    0 );
     Cmd_CommandAdd( pAbc, "Word level", "%write",       Abc_CommandWriteWlc,   0 );
-    Cmd_CommandAdd( pAbc, "Word level", "%yosys",       Abc_CommandYosys,      0 );
     Cmd_CommandAdd( pAbc, "Word level", "%ps",          Abc_CommandPs,         0 );
     Cmd_CommandAdd( pAbc, "Word level", "%cone",        Abc_CommandCone,       0 );
     Cmd_CommandAdd( pAbc, "Word level", "%abs",         Abc_CommandAbs,        0 );
@@ -293,130 +291,6 @@ usage:
     Abc_Print( -2, "\t-n     : toggle splitting into individual nodes [default = %s]\n", fSplitNodes? "yes": "no" );
     Abc_Print( -2, "\t-f     : toggle skipping flops when writing file [default = %s]\n",fNoFlops? "yes": "no" );
     Abc_Print( -2, "\t-v     : toggle printing verbose information [default = %s]\n",    fVerbose? "yes": "no" );
-    Abc_Print( -2, "\t-h     : print the command usage\n");
-    return 1;
-}
-
-/**Function********************************************************************
-
-  Synopsis    []
-
-  Description []
-
-  SideEffects []
-
-  SeeAlso     []
-
-******************************************************************************/
-int Abc_CommandYosys( Abc_Frame_t * pAbc, int argc, char ** argv )
-{
-    extern Gia_Man_t * Wln_BlastSystemVerilog( char * pFileName, char * pTopModule, int fSkipStrash, int fInvert, int fTechMap, int fVerbose );
-    extern Wln_Ntk_t * Wln_ReadSystemVerilog( char * pFileName, char * pTopModule, int fVerbose );
-
-    FILE * pFile;
-    char * pFileName = NULL;
-    char * pTopModule= NULL;
-    int fCollapse    =    0;
-    int fBlast       =    0;
-    int fInvert      =    0;
-    int fTechMap     =    0;
-    int fSkipStrash  =    0;
-    int c, fVerbose  =    0;
-    Extra_UtilGetoptReset();
-    while ( ( c = Extra_UtilGetopt( argc, argv, "Tcaismvh" ) ) != EOF )
-    {
-        switch ( c )
-        {
-        case 'T':
-            if ( globalUtilOptind >= argc )
-            {
-                Abc_Print( -1, "Command line switch \"-T\" should be followed by a file name.\n" );
-                goto usage;
-            }
-            pTopModule = argv[globalUtilOptind];
-            globalUtilOptind++;
-            break;
-        case 'c':
-            fCollapse ^= 1;
-            break;
-        case 'a':
-            fBlast ^= 1;
-            break;
-        case 'i':
-            fInvert ^= 1;
-            break;
-        case 's':
-            fSkipStrash ^= 1;
-            break;
-        case 'm':
-            fTechMap ^= 1;
-            break;
-        case 'v':
-            fVerbose ^= 1;
-            break;
-        case 'h':
-            goto usage;
-        default:
-            goto usage;
-        }
-    }
-    if ( argc != globalUtilOptind + 1 )
-    {
-        printf( "Abc_CommandReadWlc(): Input file name should be given on the command line.\n" );
-        return 0;
-    }
-    // get the file name
-    pFileName = argv[globalUtilOptind];
-    if ( (pFile = fopen( pFileName, "r" )) == NULL )
-    {
-        Abc_Print( 1, "Cannot open input file \"%s\". ", pFileName );
-        if ( (pFileName = Extra_FileGetSimilarName( pFileName, ".v", ".sv", NULL, NULL, NULL )) )
-            Abc_Print( 1, "Did you mean \"%s\"?", pFileName );
-        Abc_Print( 1, "\n" );
-        return 0;
-    }
-    fclose( pFile );
-
-    // perform reading
-    if ( fBlast )
-    {
-        Gia_Man_t * pNew = NULL;
-        if ( !strcmp( Extra_FileNameExtension(pFileName), "v" )  )
-            pNew = Wln_BlastSystemVerilog( pFileName, pTopModule, fSkipStrash, fInvert, fTechMap, fVerbose );
-        else if ( !strcmp( Extra_FileNameExtension(pFileName), "sv" )  )
-            pNew = Wln_BlastSystemVerilog( pFileName, pTopModule, fSkipStrash, fInvert, fTechMap, fVerbose );
-        else
-        {
-            printf( "Abc_CommandYosys(): Unknown file extension.\n" );
-            return 0;
-        }
-        Abc_FrameUpdateGia( pAbc, pNew );
-    }
-    else
-    {
-        Wln_Ntk_t * pNtk = NULL;
-        if ( !strcmp( Extra_FileNameExtension(pFileName), "v" )  )
-            pNtk = Wln_ReadSystemVerilog( pFileName, pTopModule, fVerbose );
-        else if ( !strcmp( Extra_FileNameExtension(pFileName), "sv" )  )
-            pNtk = Wln_ReadSystemVerilog( pFileName, pTopModule, fVerbose );
-        else
-        {
-            printf( "Abc_CommandYosys(): Unknown file extension.\n" );
-            return 0;
-        }
-        //Wlc_AbcUpdateNtk( pAbc, pNtk );
-    }
-    return 0;
-usage:
-    Abc_Print( -2, "usage: %%yosys [-T <module>] [-caismvh] <file_name>\n" );
-    Abc_Print( -2, "\t         reads Verilog or SystemVerilog using Yosys\n" );
-    Abc_Print( -2, "\t-T     : specify the top module name (default uses \"-auto-top\"\n" );
-    Abc_Print( -2, "\t-c     : toggle collapsing the design using Yosys [default = %s]\n", fCollapse? "yes": "no" );
-    Abc_Print( -2, "\t-a     : toggle bit-blasting the design using Yosys [default = %s]\n", fBlast? "yes": "no" );
-    Abc_Print( -2, "\t-i     : toggle interting the outputs (useful for miters) [default = %s]\n", fInvert? "yes": "no" );
-    Abc_Print( -2, "\t-s     : toggle no structural hashing during bit-blasting [default = %s]\n", fSkipStrash? "no strash": "strash" );
-    Abc_Print( -2, "\t-m     : toggle using \"techmap\" to blast operators [default = %s]\n", fTechMap? "yes": "no" );
-    Abc_Print( -2, "\t-v     : toggle printing verbose information [default = %s]\n", fVerbose? "yes": "no" );
     Abc_Print( -2, "\t-h     : print the command usage\n");
     return 1;
 }
@@ -1157,12 +1031,12 @@ int Abc_CommandBlast( Abc_Frame_t * pAbc, int argc, char ** argv )
 {
     extern void Wlc_NtkPrintInputInfo( Wlc_Ntk_t * pNtk );
     Wlc_Ntk_t * pNtk = Wlc_AbcGetNtk(pAbc);
-    Gia_Man_t * pNew = NULL; int c, fMiter = 0, fDumpNames = 0, fPrintInputInfo = 0;
+    Gia_Man_t * pNew = NULL; int c, fMiter = 0, fDumpNames = 0, fPrintInputInfo = 0, fReorder = 0;
     Wlc_BstPar_t Par, * pPar = &Par;
     Wlc_BstParDefault( pPar );
     pPar->nOutputRange = 2;
     Extra_UtilGetoptReset();
-    while ( ( c = Extra_UtilGetopt( argc, argv, "ORAMcombqaydestnizvh" ) ) != EOF )
+    while ( ( c = Extra_UtilGetopt( argc, argv, "ORAMcombqaydestrnizvh" ) ) != EOF )
     {
         switch ( c )
         {
@@ -1244,6 +1118,9 @@ int Abc_CommandBlast( Abc_Frame_t * pAbc, int argc, char ** argv )
             pPar->fCreateMiter ^= 1;
             fMiter ^= 1;
             break;
+        case 'r':
+            fReorder ^= 1;
+            break;
         case 'n':
             fDumpNames ^= 1;
             break;
@@ -1323,10 +1200,19 @@ int Abc_CommandBlast( Abc_Frame_t * pAbc, int argc, char ** argv )
             Abc_Print( 1, "Finished dumping file \"pio_name_map.txt\" containing PI/PO name mapping.\n" );
         }
     }
+    if ( fReorder )
+    {
+        extern Vec_Int_t * Wlc_ComputePerm( Wlc_Ntk_t * pNtk, int nPis );
+        Vec_Int_t * vPiPerm = Wlc_ComputePerm( pNtk, Gia_ManPiNum(pNew) );
+        Gia_Man_t * pTemp = Gia_ManDupPerm( pNew, vPiPerm );
+        Vec_IntFree( vPiPerm );
+        Gia_ManStop( pNew );
+        pNew = pTemp;
+    }
     Abc_FrameUpdateGia( pAbc, pNew );
     return 0;
 usage:
-    Abc_Print( -2, "usage: %%blast [-ORAM num] [-combqaydestnizvh]\n" );
+    Abc_Print( -2, "usage: %%blast [-ORAM num] [-combqaydestrnizvh]\n" );
     Abc_Print( -2, "\t         performs bit-blasting of the word-level design\n" );
     Abc_Print( -2, "\t-O num : zero-based index of the first word-level PO to bit-blast [default = %d]\n", pPar->iOutput );
     Abc_Print( -2, "\t-R num : the total number of word-level POs to bit-blast [default = %d]\n",          pPar->nOutputRange );
@@ -1343,6 +1229,7 @@ usage:
     Abc_Print( -2, "\t-e     : toggle creating miter with output word bits combined [default = %s]\n",     pPar->fCreateWordMiter? "yes": "no" );
     Abc_Print( -2, "\t-s     : toggle creating decoded MUXes [default = %s]\n",                            pPar->fDecMuxes? "yes": "no" );
     Abc_Print( -2, "\t-t     : toggle creating regular multi-output miter [default = %s]\n",               fMiter? "yes": "no" );
+    Abc_Print( -2, "\t-r     : toggle using interleaved variable ordering [default = %s]\n",               fReorder? "yes": "no" );
     Abc_Print( -2, "\t-n     : toggle dumping signal names into a text file [default = %s]\n",             fDumpNames? "yes": "no" );
     Abc_Print( -2, "\t-i     : toggle to print input names after blasting [default = %s]\n",               fPrintInputInfo ? "yes": "no" );
     Abc_Print( -2, "\t-z     : toggle saving flop names after blasting [default = %s]\n",                  pPar->fSaveFfNames ? "yes": "no" );

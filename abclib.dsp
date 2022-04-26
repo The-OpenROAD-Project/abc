@@ -1127,6 +1127,18 @@ SOURCE=.\src\base\wln\wln.h
 # End Source File
 # Begin Source File
 
+SOURCE=.\src\base\wln\wlnBlast.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\src\base\wln\wlnCom.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\src\base\wln\wlnGuide.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\src\base\wln\wlnMem.c
 # End Source File
 # Begin Source File
@@ -1140,6 +1152,10 @@ SOURCE=.\src\base\wln\wlnNtk.c
 # Begin Source File
 
 SOURCE=.\src\base\wln\wlnObj.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\src\base\wln\wlnRead.c
 # End Source File
 # Begin Source File
 
@@ -4915,6 +4931,14 @@ SOURCE=.\src\aig\gia\giaCSatOld.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\src\aig\gia\giaCSatP.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\src\aig\gia\giaCSatP.h
+# End Source File
+# Begin Source File
+
 SOURCE=.\src\aig\gia\giaCTas.c
 # End Source File
 # Begin Source File
@@ -5568,6 +5592,10 @@ SOURCE=.\src\proof\cec\cecSatG.c
 # Begin Source File
 
 SOURCE=.\src\proof\cec\cecSatG2.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\src\proof\cec\cecSatG3.c
 # End Source File
 # Begin Source File
 
