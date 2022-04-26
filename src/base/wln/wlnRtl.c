@@ -37,6 +37,7 @@ ABC_NAMESPACE_IMPL_START
 ////////////////////////////////////////////////////////////////////////
 ///                     FUNCTION DEFINITIONS                         ///
 ////////////////////////////////////////////////////////////////////////
+
 /**Function*************************************************************
 
   Synopsis    []
@@ -48,22 +49,60 @@ ABC_NAMESPACE_IMPL_START
   SeeAlso     []
 
 ***********************************************************************/
-Wln_Ntk_t * Wln_ReadRtl( char * pFileName )
+#define MAX_LINE 1000000
+
+void Rtl_NtkCleanFile( char * pFileName )
 {
-    return NULL;
+    char * pBuffer, * pFileName2 = "_temp__.rtlil"; 
+    FILE * pFile = fopen( pFileName, "rb" );
+    FILE * pFile2;
+    if ( pFile == NULL )
+    {
+        printf( "Cannot open file \"%s\" for reading.\n", pFileName );
+        return;
+    }
+    pFile2 = fopen( pFileName2, "wb" );
+    if ( pFile2 == NULL )
+    {
+        fclose( pFile );
+        printf( "Cannot open file \"%s\" for writing.\n", pFileName2 );
+        return;
+    }
+    pBuffer = ABC_ALLOC( char, MAX_LINE );
+    while ( fgets( pBuffer, MAX_LINE, pFile ) != NULL )
+        if ( !strstr(pBuffer, "attribute \\src") )
+            fputs( pBuffer, pFile2 );
+    ABC_FREE( pBuffer );
+    fclose( pFile );
+    fclose( pFile2 );
 }
 
-/**Function*************************************************************
+void Rtl_NtkCleanFile2( char * pFileName )
+{
+    char * pBuffer, * pFileName2 = "_temp__.v"; 
+    FILE * pFile = fopen( pFileName, "rb" );
+    FILE * pFile2;
+    if ( pFile == NULL )
+    {
+        printf( "Cannot open file \"%s\" for reading.\n", pFileName );
+        return;
+    }
+    pFile2 = fopen( pFileName2, "wb" );
+    if ( pFile2 == NULL )
+    {
+        fclose( pFile );
+        printf( "Cannot open file \"%s\" for writing.\n", pFileName2 );
+        return;
+    }
+    pBuffer = ABC_ALLOC( char, MAX_LINE );
+    while ( fgets( pBuffer, MAX_LINE, pFile ) != NULL )
+        if ( !strstr(pBuffer, "//") )
+            fputs( pBuffer, pFile2 );
+    ABC_FREE( pBuffer );
+    fclose( pFile );
+    fclose( pFile2 );
+}
 
-  Synopsis    []
-
-  Description []
-               
-  SideEffects []
-
-  SeeAlso     []
-
-***********************************************************************/
 char * Wln_GetYosysName()
 {
     char * pYosysName = NULL;
@@ -96,27 +135,31 @@ int Wln_ConvertToRtl( char * pCommand, char * pFileTemp )
     fclose( pFile );
     return 1;
 }
-Wln_Ntk_t * Wln_ReadSystemVerilog( char * pFileName, char * pTopModule, int fVerbose )
+Rtl_Lib_t * Wln_ReadSystemVerilog( char * pFileName, char * pTopModule, int fCollapse, int fVerbose )
 {
-    Wln_Ntk_t * pNtk = NULL;
+    Rtl_Lib_t * pNtk = NULL;
     char Command[1000];
     char * pFileTemp = "_temp_.rtlil";
     int fSVlog = strstr(pFileName, ".sv") != NULL;
-    sprintf( Command, "%s -qp \"read_verilog %s%s; hierarchy %s%s; flatten; proc; write_rtlil %s\"", 
+    if ( strstr(pFileName, ".rtl") )
+        return Rtl_LibReadFile( pFileName, pFileName );
+    sprintf( Command, "%s -qp \"read_verilog %s%s; hierarchy %s%s; %sproc; write_rtlil %s\"", 
         Wln_GetYosysName(), fSVlog ? "-sv ":"", pFileName, 
-        pTopModule ? "-top " : "-auto-top", pTopModule ? pTopModule : "", pFileTemp );
+        pTopModule ? "-top "    : "", 
+        pTopModule ? pTopModule : "", 
+        fCollapse ? "flatten; " : "",
+        pFileTemp );
     if ( fVerbose )
     printf( "%s\n", Command );
     if ( !Wln_ConvertToRtl(Command, pFileTemp) )
-    {
         return NULL;
-    }
-    pNtk = Wln_ReadRtl( pFileTemp );
+    pNtk = Rtl_LibReadFile( pFileTemp, pFileName );
     if ( pNtk == NULL )
     {
         printf( "Dumped the design into file \"%s\".\n", pFileTemp );
         return NULL;
     }
+    Rtl_NtkCleanFile( pFileTemp );
     unlink( pFileTemp );
     return pNtk;
 }
@@ -125,10 +168,16 @@ Gia_Man_t * Wln_BlastSystemVerilog( char * pFileName, char * pTopModule, int fSk
     Gia_Man_t * pGia = NULL;
     char Command[1000];
     char * pFileTemp = "_temp_.aig";
-    int fSVlog = strstr(pFileName, ".sv") != NULL;
-    sprintf( Command, "%s -qp \"read_verilog %s%s; hierarchy %s%s; flatten; proc; %saigmap; write_aiger %s\"", 
-        Wln_GetYosysName(), fSVlog ? "-sv ":"", pFileName, 
-        pTopModule ? "-top " : "-auto-top", pTopModule ? pTopModule : "", fTechMap ? "techmap; setundef -zero; " : "", pFileTemp );
+    int fRtlil = strstr(pFileName, ".rtl") != NULL;
+    int fSVlog = strstr(pFileName, ".sv")  != NULL;
+    sprintf( Command, "%s -qp \"%s%s%s; hierarchy %s%s; flatten; proc; %saigmap; write_aiger %s\"", 
+        Wln_GetYosysName(), 
+        fRtlil ? "read_rtlil" : "read_verilog",
+        fSVlog ? " -sv ":" ", 
+        pFileName, 
+        pTopModule ? "-top " : "-auto-top", 
+        pTopModule ? pTopModule : "", 
+        fTechMap ? "techmap; setundef -zero; " : "", pFileTemp );
     if ( fVerbose )
     printf( "%s\n", Command );
     if ( !Wln_ConvertToRtl(Command, pFileTemp) )
