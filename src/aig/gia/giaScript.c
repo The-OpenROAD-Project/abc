@@ -429,14 +429,14 @@ Gia_Man_t * Gia_ManAigSynch2( Gia_Man_t * pInit, void * pPars0, int nLutSize, in
         Gia_ManStop( pTemp );
     }
     // perform balancing
-    if ( Gia_ManBufNum(pGia1) || 1 )
+    //if ( Gia_ManBufNum(pGia1) || 1 )
         pGia2 = Gia_ManAreaBalance( pGia1, 0, ABC_INFINITY, 0, 0 );
-    else
-    {
-        pGia2 = Gia_ManLutBalance( pGia1, nLutSize, 1, 1, 1, 0 );
-        pGia2 = Gia_ManAreaBalance( pTemp = pGia2, 0, ABC_INFINITY, 0, 0 );
-        Gia_ManStop( pTemp );
-    }
+    //else
+    //{
+    //    pGia2 = Gia_ManLutBalance( pGia1, nLutSize, 1, 1, 1, 0 );
+    //    pGia2 = Gia_ManAreaBalance( pTemp = pGia2, 0, ABC_INFINITY, 0, 0 );
+    //    Gia_ManStop( pTemp );
+    //}
     if ( fVerbose )     Gia_ManPrintStats( pGia2, NULL );
     // perform mapping
     pGia2 = Lf_ManPerformMapping( pTemp = pGia2, pPars );

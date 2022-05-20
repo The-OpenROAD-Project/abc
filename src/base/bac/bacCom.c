@@ -570,7 +570,7 @@ int Bac_CommandCec( Abc_Frame_t * pAbc, int argc, char ** argv )
     Bac_Man_t * p = Bac_AbcGetMan(pAbc);
     Gia_Man_t * pFirst, * pSecond, * pMiter;
     Cec_ParCec_t ParsCec, * pPars = &ParsCec;
-    Vec_Ptr_t * vDes;
+    Vec_Ptr_t * vDes = NULL;
     char * FileName, * pStr, ** pArgvNew;
     int c, nArgcNew, fDumpMiter = 0;
     FILE * pFile;

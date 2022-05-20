@@ -44,7 +44,7 @@ ABC_NAMESPACE_IMPL_START
 ***********************************************************************/
 void Acb_ObjPushToFanout( Acb_Ntk_t * p, int iObj, int iFaninIndex, int iFanout )
 {
-    word c0, uTruthObjNew = 0, uTruthObj = Acb_ObjTruth( p, iObj ), Gate;
+    word c0, uTruthObjNew = 0, uTruthObj = Acb_ObjTruth( p, iObj ), Gate = 0;
     word c1, uTruthFanNew = 0, uTruthFan = Acb_ObjTruth( p, iFanout );
     int DecType = Abc_Tt6CheckOutDec( uTruthObj, iFaninIndex, &uTruthObjNew );
     int iFanin = Acb_ObjFanin( p, iObj, iFaninIndex );

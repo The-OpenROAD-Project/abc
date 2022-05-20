@@ -577,7 +577,7 @@ usage:
 ******************************************************************************/
 int Cba_CommandCec( Abc_Frame_t * pAbc, int argc, char ** argv )
 {
-    Cba_Man_t * p = Cba_AbcGetMan(pAbc), * pTemp;
+    Cba_Man_t * p = Cba_AbcGetMan(pAbc), * pTemp = NULL;
     Gia_Man_t * pFirst, * pSecond, * pMiter;
     Cec_ParCec_t ParsCec, * pPars = &ParsCec;
     char * pFileName, * pStr, ** pArgvNew;
