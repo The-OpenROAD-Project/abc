@@ -22,7 +22,7 @@ MODULES := \
 	src/map/mapper src/map/mio src/map/super src/map/if \
 	src/map/amap src/map/cov src/map/scl src/map/mpm \
 	src/misc/extra src/misc/mvc src/misc/st src/misc/util src/misc/nm \
-	src/misc/vec src/misc/hash src/misc/tim src/misc/bzlib src/misc/zlib \
+	src/misc/vec src/misc/hash src/misc/tim src/misc/bzlib \
 	src/misc/mem src/misc/bar src/misc/bbl src/misc/parse \
 	src/opt/cut src/opt/fxu src/opt/fxch src/opt/rwr src/opt/mfs src/opt/sim \
 	src/opt/ret src/opt/fret src/opt/res src/opt/lpk src/opt/nwk src/opt/rwt \
@@ -34,6 +34,10 @@ MODULES := \
 	src/proof/cec src/proof/acec src/proof/dch src/proof/fraig src/proof/fra src/proof/ssw \
 	src/aig/aig src/aig/saig src/aig/gia src/aig/ioa src/aig/ivy src/aig/hop \
 	src/aig/miniaig
+
+ifndef ABC_USE_SYSTEM_ZLIB
+MODULES += src/misc/zlib
+endif
 
 all: $(PROG)
 default: $(PROG)

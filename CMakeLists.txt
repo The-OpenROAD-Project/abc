@@ -57,6 +57,12 @@ if( APPLE )
     set(make_env ${CMAKE_COMMAND} -E env SDKROOT=${CMAKE_OSX_SYSROOT})
 endif()
 
+if(ABC_USE_SYSTEM_ZLIB)
+    message("Using system zlib.")
+    find_package(ZLIB)
+    set(ABC_USE_SYSTEM_ZLIB_FLAGS "ABC_USE_SYSTEM_ZLIB=${ABC_USE_SYSTEM_ZLIB}")
+endif()
+
 # run make to extract compiler options, linker options and list of source files
 execute_process(
   COMMAND
@@ -65,6 +71,7 @@ execute_process(
         ${ABC_READLINE_FLAGS}
         ${ABC_USE_NAMESPACE_FLAGS}
         ${ABC_USE_STDINT_H_FLAGS}
+        ${ABC_USE_SYSTEM_ZLIB_FLAGS}
         ARCHFLAGS_EXE=${CMAKE_CURRENT_BINARY_DIR}/abc_arch_flags_program.exe
         ABC_MAKE_NO_DEPS=1
         CC=${CMAKE_C_COMPILER}
@@ -98,6 +105,9 @@ function(abc_properties target visibility)
     target_include_directories(${target} ${visibility} ${CMAKE_CURRENT_SOURCE_DIR}/src )
     target_compile_options_filtered(${target} ${visibility} ${ABC_CFLAGS} ${ABC_CXXFLAGS} -Wno-unused-but-set-variable )
     target_link_libraries(${target} ${visibility} ${ABC_LIBS})
+    if(ABC_USE_SYSTEM_ZLIB)
+        target_link_libraries(${target} ${visibility} ZLIB::ZLIB)
+    endif()
 endfunction()
 
 set(ABC_MAIN_SRC src/base/main/main.c)
