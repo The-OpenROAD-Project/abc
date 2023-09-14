@@ -528,7 +528,7 @@ int Gia_ManChoiceMinLevel_rec( Gia_Man_t * p, int iPivot, int fDiveIn, Vec_Int_t
 {
     int Level0, Level1, LevelMax;
     Gia_Obj_t * pPivot = Gia_ManObj( p, iPivot );
-    if ( Gia_ObjIsCi(pPivot) )
+    if ( Gia_ObjIsCi(pPivot) || iPivot == 0 )
         return 0;
     if ( Gia_ObjLevel(p, pPivot) )
         return Gia_ObjLevel(p, pPivot);
@@ -1869,7 +1869,7 @@ void Gia_ManEquivToChoices_rec( Gia_Man_t * pNew, Gia_Man_t * p, Gia_Obj_t * pOb
     Gia_Obj_t * pRepr, * pReprNew, * pObjNew;
     if ( ~pObj->Value )
         return;
-    if ( (pRepr = Gia_ObjReprObj(p, Gia_ObjId(p, pObj))) )
+    if ( (pRepr = Gia_ObjReprObj(p, Gia_ObjId(p, pObj))) && !Gia_ObjFailed(p,Gia_ObjId(p,pObj))  )
     {
         if ( Gia_ObjIsConst0(pRepr) )
         {

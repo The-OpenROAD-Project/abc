@@ -65,6 +65,7 @@ static int IoCommandWriteAigerCex( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteBaf    ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteBblif  ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteBlif   ( Abc_Frame_t * pAbc, int argc, char **argv );
+static int IoCommandWriteEdgelist( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteBlifMv ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteBench  ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteBook   ( Abc_Frame_t * pAbc, int argc, char **argv );
@@ -84,6 +85,7 @@ static int IoCommandWriteTruths ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteStatus ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteSmv    ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteJson   ( Abc_Frame_t * pAbc, int argc, char **argv );
+static int IoCommandWriteResub  ( Abc_Frame_t * pAbc, int argc, char **argv );
 
 extern void Abc_FrameCopyLTLDataBase( Abc_Frame_t *pAbc, Abc_Ntk_t * pNtk );
 
@@ -144,6 +146,7 @@ void Io_Init( Abc_Frame_t * pAbc )
     Cmd_CommandAdd( pAbc, "I/O", "&write_cnf",    IoCommandWriteCnf2,    0 );
     Cmd_CommandAdd( pAbc, "I/O", "write_dot",     IoCommandWriteDot,     0 );
     Cmd_CommandAdd( pAbc, "I/O", "write_eqn",     IoCommandWriteEqn,     0 );
+    Cmd_CommandAdd( pAbc, "I/O", "write_edgelist",IoCommandWriteEdgelist,    0 );
     Cmd_CommandAdd( pAbc, "I/O", "write_gml",     IoCommandWriteGml,     0 );
 //    Cmd_CommandAdd( pAbc, "I/O", "write_list",    IoCommandWriteList,    0 );
     Cmd_CommandAdd( pAbc, "I/O", "write_pla",     IoCommandWritePla,     0 );
@@ -155,6 +158,7 @@ void Io_Init( Abc_Frame_t * pAbc )
     Cmd_CommandAdd( pAbc, "I/O", "write_status",  IoCommandWriteStatus,  0 );
     Cmd_CommandAdd( pAbc, "I/O", "write_smv",     IoCommandWriteSmv,     0 );
     Cmd_CommandAdd( pAbc, "I/O", "write_json",    IoCommandWriteJson,    0 );
+    Cmd_CommandAdd( pAbc, "I/O", "&write_resub",  IoCommandWriteResub,   0 );
 }
 
 /**Function*************************************************************
@@ -1188,7 +1192,7 @@ usage:
     fprintf( pAbc->Err, "\t-x     : toggles between bin and hex notation [default = %s]\n", fHex?  "hex":"bin" );
     fprintf( pAbc->Err, "\t-f     : toggles reading truth table(s) from file [default = %s]\n",      fFile? "yes": "no" );
     fprintf( pAbc->Err, "\t-h     : prints the command summary\n" );
-    fprintf( pAbc->Err, "\ttruth  : truth table with most signficant bit first (e.g. 1000 for AND(a,b))\n" );
+    fprintf( pAbc->Err, "\ttruth  : truth table with most significant bit first (e.g. 1000 for AND(a,b))\n" );
     fprintf( pAbc->Err, "\tfile   : file name with the truth table\n" );
     return 1;
 }
@@ -1538,7 +1542,7 @@ int IoCommandWrite( Abc_Frame_t * pAbc, int argc, char **argv )
     if ( !strcmp( Extra_FileNameExtension(pFileName), "genlib" )  )
         sprintf( Command, "write_genlib %s", pFileName );
     else if ( !strcmp( Extra_FileNameExtension(pFileName), "lib" ) )
-        sprintf( Command, "write_liberty %s", pFileName );
+        sprintf( Command, "write_lib %s", pFileName );
     else if ( !strcmp( Extra_FileNameExtension(pFileName), "dsd" ) )
         sprintf( Command, "dsd_save %s", pFileName );
     if ( Command[0] )
@@ -2801,6 +2805,69 @@ usage:
   SeeAlso     []
 
 ***********************************************************************/
+int IoCommandWriteEdgelist( Abc_Frame_t * pAbc, int argc, char **argv )
+{
+    char * pFileName;
+    int c, fSpecial = 0;
+
+    Extra_UtilGetoptReset();
+    while ( ( c = Extra_UtilGetopt( argc, argv, "Nh" ) ) != EOF )
+    {
+        switch ( c )
+        {
+            case 'N':
+                fSpecial ^= 1;
+                break;
+            /*
+            case 'a':
+                fUseHie ^= 1;
+                break;
+            case 'h':
+                goto usage;
+            */
+            default:
+                goto usage;
+        }
+    }
+    if ( pAbc->pNtkCur == NULL )
+    {
+        fprintf( pAbc->Out, "Empty network.\n" );
+        return 0;
+    }
+    if ( argc != globalUtilOptind + 1 )
+        goto usage;
+    // get the output file name
+    pFileName = argv[globalUtilOptind];
+    // call the corresponding file writer
+    if ( fSpecial ) // keep original naming
+        Io_WriteEdgelist( pAbc->pNtkCur, pFileName, 1, 0, 0, fSpecial); //last option is fName
+    else
+        Io_WriteEdgelist( pAbc->pNtkCur, pFileName, 1, 0, 0, fSpecial); //last option is fName
+    return 0;
+
+usage:
+    fprintf( pAbc->Err, "usage: write_edgelist [-N] <file>\n" );
+    fprintf( pAbc->Err, "\t         writes the network into edgelist file\n" );
+    fprintf( pAbc->Err, "\t         part of Verilog-2-PyG (PyTorch Geometric). more details https://github.com/ycunxi/Verilog-to-PyG \n" );
+    fprintf( pAbc->Err, "\t-N     : toggle keeping original naming of the netlist in edgelist (default=False)\n");  
+    fprintf( pAbc->Err, "\t-h     : print the help massage\n" );
+    fprintf( pAbc->Err, "\tfile   : the name of the file to write (extension .el)\n" );
+    return 1;
+}
+
+
+
+/**Function*************************************************************
+
+  Synopsis    []
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
 int IoCommandWriteGml( Abc_Frame_t * pAbc, int argc, char **argv )
 {
     char * pFileName;
@@ -3475,6 +3542,57 @@ usage:
     fprintf( pAbc->Err, "usage: write_json [-ch] <file>\n" );
     fprintf( pAbc->Err, "\t         write the network in JSON format\n" );
     fprintf( pAbc->Err, "\t-c     : output extracted version\n" );
+    fprintf( pAbc->Err, "\t-h     : print the help message\n" );
+    fprintf( pAbc->Err, "\tfile   : the name of the file to write (extension .json)\n" );
+    return 1;
+}
+
+/**Function*************************************************************
+
+  Synopsis    []
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+int IoCommandWriteResub( Abc_Frame_t * pAbc, int argc, char **argv )
+{
+    extern void Gia_ManWriteResub( Gia_Man_t * p, char * pFileName );
+    char * pFileName;
+    int c;
+    Extra_UtilGetoptReset();
+    while ( ( c = Extra_UtilGetopt( argc, argv, "ch" ) ) != EOF )
+    {
+        switch ( c )
+        {
+            case 'h':
+                goto usage;
+            default:
+                goto usage;
+        }
+    }
+    if ( argc != globalUtilOptind + 1 )
+        goto usage;
+    pFileName = argv[globalUtilOptind];
+    if ( pAbc->pGia == NULL )
+    {
+        Abc_Print( -1, "IoCommandWriteResub(): There is no AIG.\n" );
+        return 1;
+    }
+    if ( Gia_ManCiNum(pAbc->pGia) > 20 )
+    {
+        Abc_Print( -1, "IoCommandWriteResub(): The number of inputs is wrong.\n" );
+        return 1;
+    }
+    Gia_ManWriteResub( pAbc->pGia, pFileName );
+    return 0;
+
+usage:
+    fprintf( pAbc->Err, "usage: &write_resub [-ch] <file>\n" );
+    fprintf( pAbc->Err, "\t         write the network in resub format\n" );
     fprintf( pAbc->Err, "\t-h     : print the help message\n" );
     fprintf( pAbc->Err, "\tfile   : the name of the file to write (extension .json)\n" );
     return 1;

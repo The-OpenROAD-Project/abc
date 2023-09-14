@@ -557,9 +557,31 @@ void Io_WriteVerilogObjects( FILE * pFile, Abc_Ntk_t * pNtk, int fOnlyAnds )
     }
     else
     {
+        //Vec_Int_t * vMap = Vec_IntStartFull( 2*Abc_NtkObjNumMax(pNtk) );
         vLevels = Vec_VecAlloc( 10 );
         Abc_NtkForEachNode( pNtk, pObj, i )
         {
+            if ( Abc_ObjFaninNum(pObj) == 0 )
+            {
+                fprintf( pFile, "  assign %s = ", Io_WriteVerilogGetName(Abc_ObjName(Abc_ObjFanout0(pObj))) );
+                fprintf( pFile, "1\'b%d;\n", Abc_NodeIsConst1(pObj) );
+                continue;
+            }
+            /*
+            if ( Abc_ObjFaninNum(pObj) == 1 || Abc_ObjIsCo(Abc_ObjFanout0(Abc_ObjFanout0(pObj))) )
+            {
+                int iLit = Abc_Var2Lit( Abc_ObjId( Abc_ObjFanin0(Abc_ObjFanin0(pObj)) ), Abc_NodeIsInv(pObj) );
+                int iObj = Vec_IntEntry( vMap, iLit );
+                if ( iObj == -1 )
+                    Vec_IntWriteEntry( vMap, iLit, Abc_ObjId(Abc_ObjFanout0(pObj)) );
+                else
+                {
+                    fprintf( pFile, "  assign %s = ", Io_WriteVerilogGetName(Abc_ObjName(Abc_ObjFanout0(pObj))) );
+                    fprintf( pFile, "%s;\n", Io_WriteVerilogGetName(Abc_ObjName(Abc_NtkObj(pNtk, iObj))) );
+                    continue;
+                }
+            }
+            */
             pFunc = (Hop_Obj_t *)pObj->pData;
             fprintf( pFile, "  assign %s = ", Io_WriteVerilogGetName(Abc_ObjName(Abc_ObjFanout0(pObj))) );
             // set the input names
@@ -581,6 +603,7 @@ void Io_WriteVerilogObjects( FILE * pFile, Abc_Ntk_t * pNtk, int fOnlyAnds )
                 ABC_FREE( Hop_IthVar((Hop_Man_t *)pNtk->pManFunc, k)->pData );
         }
         Vec_VecFree( vLevels );
+        //Vec_IntFree( vMap );
     }
 }
 

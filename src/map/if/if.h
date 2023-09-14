@@ -140,6 +140,8 @@ struct If_Par_t_
     int                fUseCofVars;   // use cofactoring variables
     int                fUseAndVars;   // use bi-decomposition
     int                fUseTtPerm;    // compute truth tables of the cut functions
+    int                fUseCheck1;    // compute truth tables of the cut functions
+    int                fUseCheck2;    // compute truth tables of the cut functions
     int                fDeriveLuts;   // enables deriving LUT structures
     int                fDoAverage;    // optimize average rather than maximum level
     int                fHashMapping;  // perform AIG hashing after mapping
@@ -275,6 +277,8 @@ struct If_Man_t_
     void *             pUserMan;
     Vec_Int_t *        vDump;
     int                pDumpIns[16];
+    Vec_Str_t *        vMarks;
+    Vec_Int_t *        vVisited2;
 
     // timing manager
     Tim_Man_t *        pManTim;
@@ -551,6 +555,8 @@ extern int             If_CluCheckExt( void * p, word * pTruth, int nVars, int n
                            char * pLut0, char * pLut1, word * pFunc0, word * pFunc1 );
 extern int             If_CluCheckExt3( void * p, word * pTruth, int nVars, int nLutLeaf, int nLutLeaf2, int nLutRoot, 
                            char * pLut0, char * pLut1, char * pLut2, word * pFunc0, word * pFunc1, word * pFunc2 );
+extern int             If_MatchCheck1( If_Man_t * p, unsigned * pTruth, int nVars, int nLeaves, char * pStr );
+extern int             If_MatchCheck2( If_Man_t * p, unsigned * pTruth, int nVars, int nLeaves, char * pStr );
 /*=== ifDelay.c =============================================================*/
 extern int             If_CutDelaySop( If_Man_t * p, If_Cut_t * pCut );
 extern int             If_CutSopBalanceEvalInt( Vec_Int_t * vCover, int * pTimes, int * pFaninLits, Vec_Int_t * vAig, int * piRes, int nSuppAll, int * pArea );
@@ -564,7 +570,7 @@ extern If_DsdMan_t *   If_DsdManAlloc( int nVars, int nLutSize );
 extern void            If_DsdManAllocIsops( If_DsdMan_t * p, int nLutSize );
 extern void            If_DsdManPrint( If_DsdMan_t * p, char * pFileName, int Number, int Support, int fOccurs, int fTtDump, int fVerbose );
 extern void            If_DsdManTune( If_DsdMan_t * p, int LutSize, int fFast, int fAdd, int fSpec, int fVerbose );
-extern void            Id_DsdManTuneStr( If_DsdMan_t * p, char * pStruct, int nConfls, int nProcs, int fVerbose );
+extern void            Id_DsdManTuneStr( If_DsdMan_t * p, char * pStruct, int nConfls, int nProcs, int nInputs, int fVerbose );
 extern void            If_DsdManFree( If_DsdMan_t * p, int fVerbose );
 extern void            If_DsdManSave( If_DsdMan_t * p, char * pFileName );
 extern If_DsdMan_t *   If_DsdManLoad( char * pFileName );

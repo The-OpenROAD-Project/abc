@@ -917,7 +917,7 @@ static inline void Cec5_ObjSimCi( Gia_Man_t * p, int iObj )
     int w;
     word * pSim = Cec5_ObjSim( p, iObj );
     for ( w = 0; w < p->nSimWords; w++ )
-        pSim[w] = Gia_ManRandomW( 0 );
+        pSim[w] = Abc_RandomW( 0 );
     pSim[0] <<= 1;
 }
 static inline void Cec5_ObjClearSimCi( Gia_Man_t * p, int iObj )
@@ -1871,6 +1871,7 @@ void Cec5_ManExtend( Cec5_Man_t * pMan, CbsP_Man_t * pCbs ){
 int Cec5_ManSweepNodeCbs( Cec5_Man_t * p, CbsP_Man_t * pCbs, int iObj, int iRepr, int fTagFail );
 int Cec5_ManPerformSweeping( Gia_Man_t * p, Cec_ParFra_t * pPars, Gia_Man_t ** ppNew, int fSimOnly, int fCbs, int approxLim, int subBatchSz, int adaRecycle )
 {
+    extern void Gia_ManRemoveWrongChoices( Gia_Man_t * p );
     Gia_Obj_t * pObj, * pRepr; 
     CbsP_Man_t * pCbs = NULL;
     int i, fSimulate = 1;
@@ -1902,7 +1903,7 @@ int Cec5_ManPerformSweeping( Gia_Man_t * p, Cec_ParFra_t * pPars, Gia_Man_t ** p
         assert( Gia_ObjId(p, pObj) == i+1 );
 
     // check if any output trivially fails under all-0 pattern
-    Gia_ManRandom( 1 );
+    Abc_Random( 1 );
     Gia_ManSetPhase( p );
     if ( pPars->nLevelMax )
         Gia_ManLevelNum(p);
@@ -2119,6 +2120,7 @@ finalize:
         CbsP_ManStop(pCbs);
     //Gia_ManStaticFanoutStop( p );
     //Gia_ManEquivPrintClasses( p, 1, 0 );
+    Gia_ManRemoveWrongChoices( p );
     return p->pCexSeq ? 0 : 1;
 }
 Gia_Man_t * Cec5_ManSimulateTest( Gia_Man_t * p, Cec_ParFra_t * pPars, int fCbs, int approxLim, int subBatchSz, int adaRecycle )
@@ -2320,6 +2322,17 @@ int Cec5_ManSweepNodeCbs( Cec5_Man_t * p, CbsP_Man_t * pCbs, int iObj, int iRepr
         RetValue = 2;
     }
     return RetValue;
+}
+Gia_Man_t * Cec5_ManSimulateTest3( Gia_Man_t * p, int nBTLimit, int fVerbose )
+{
+    int fCbs = 1, approxLim = 600, subBatchSz = 1, adaRecycle = 500;
+    Gia_Man_t * pNew = NULL;
+    Cec_ParFra_t ParsFra, * pPars = &ParsFra;
+    Cec5_ManSetParams( pPars );
+    pPars->fVerbose = fVerbose;
+    pPars->nBTLimit = nBTLimit;
+    Cec5_ManPerformSweeping( p, pPars, &pNew, 0, fCbs, approxLim, subBatchSz, adaRecycle );
+    return pNew;
 }
 
 ////////////////////////////////////////////////////////////////////////

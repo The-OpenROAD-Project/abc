@@ -72,8 +72,8 @@ void Rtl_NtkBlastNode( Gia_Man_t * pNew, int Type, int nIns, Vec_Int_t * vDatas,
     extern void Wlc_BlastBooth( Gia_Man_t * pNew, int * pArgA, int * pArgB, int nArgA, int nArgB, Vec_Int_t * vRes, int fSigned, int fCla, Vec_Wec_t ** pvProds );
     extern void Wlc_BlastMultiplier3( Gia_Man_t * pNew, int * pArgA, int * pArgB, int nArgA, int nArgB, Vec_Int_t * vRes, int fSigned, int fCla, Vec_Wec_t ** pvProds );
     extern void Wlc_BlastZeroCondition( Gia_Man_t * pNew, int * pDiv, int nDiv, Vec_Int_t * vRes );
-    extern void Wlc_BlastDivider( Gia_Man_t * pNew, int * pNum, int nNum, int * pDiv, int nDiv, int fQuo, Vec_Int_t * vRes );
-    extern void Wlc_BlastDividerSigned( Gia_Man_t * pNew, int * pNum, int nNum, int * pDiv, int nDiv, int fQuo, Vec_Int_t * vRes );
+    extern void Wlc_BlastDividerTop( Gia_Man_t * pNew, int * pNum, int nNum, int * pDiv, int nDiv, int fQuo, Vec_Int_t * vRes, int fNonRest );
+    extern void Wlc_BlastDividerSigned( Gia_Man_t * pNew, int * pNum, int nNum, int * pDiv, int nDiv, int fQuo, Vec_Int_t * vRes, int fNonRest );
     extern void Wlc_BlastPower( Gia_Man_t * pNew, int * pNum, int nNum, int * pExp, int nExp, Vec_Int_t * vTemp, Vec_Int_t * vRes );
 
     int k, iLit, iLit0, iLit1;
@@ -289,9 +289,17 @@ void Rtl_NtkBlastNode( Gia_Man_t * pNew, int Type, int nIns, Vec_Int_t * vDatas,
         {
             int fBooth  = 1;
             int fCla    = 0;
-            int fSigned = fSign0 && fSign1;
+            int fSigned = fSign0 && fSign1;   
+            //int i, iObj;
             Vec_IntShrink( vArg0, nSizeArg0 );
             Vec_IntShrink( vArg1, nSizeArg1 );
+
+            //printf( "Adding %d + %d + %d buffers\n", nSizeArg0, nSizeArg1, nRange ); 
+            //Vec_IntForEachEntry( vArg0, iObj, i )
+            //    Vec_IntWriteEntry( vArg0, i, Gia_ManAppendBuf(pNew, iObj) );
+            //Vec_IntForEachEntry( vArg1, iObj, i )
+            //    Vec_IntWriteEntry( vArg1, i, Gia_ManAppendBuf(pNew, iObj) );
+
             if ( Wlc_NtkCountConstBits(Vec_IntArray(vArg0), Vec_IntSize(vArg0)) < Wlc_NtkCountConstBits(Vec_IntArray(vArg1), Vec_IntSize(vArg1)) )
                 ABC_SWAP( Vec_Int_t, *vArg0, *vArg1 )
             if ( fBooth )
@@ -303,6 +311,9 @@ void Rtl_NtkBlastNode( Gia_Man_t * pNew, int Type, int nIns, Vec_Int_t * vDatas,
             else
                 Vec_IntShrink( vRes, nRange );
             assert( Vec_IntSize(vRes) == nRange );
+
+            //Vec_IntForEachEntry( vRes, iObj, i )
+            //    Vec_IntWriteEntry( vRes, i, Gia_ManAppendBuf(pNew, iObj) );
             return;
         }
         if ( Type == ABC_OPER_ARI_DIV || Type == ABC_OPER_ARI_MOD )
@@ -310,9 +321,9 @@ void Rtl_NtkBlastNode( Gia_Man_t * pNew, int Type, int nIns, Vec_Int_t * vDatas,
             int fDivBy0 = 1; // correct with 1
             int fSigned = fSign0 && fSign1;
             if ( fSigned )
-                Wlc_BlastDividerSigned( pNew, Vec_IntArray(vArg0), nRangeMax, Vec_IntArray(vArg1), nRangeMax, Type == ABC_OPER_ARI_DIV, vRes );
+                Wlc_BlastDividerSigned( pNew, Vec_IntArray(vArg0), nRangeMax, Vec_IntArray(vArg1), nRangeMax, Type == ABC_OPER_ARI_DIV, vRes, 0 );
             else
-                Wlc_BlastDivider( pNew, Vec_IntArray(vArg0), nRangeMax, Vec_IntArray(vArg1), nRangeMax, Type == ABC_OPER_ARI_DIV, vRes );
+                Wlc_BlastDividerTop( pNew, Vec_IntArray(vArg0), nRangeMax, Vec_IntArray(vArg1), nRangeMax, Type == ABC_OPER_ARI_DIV, vRes, 0 );
             Vec_IntShrink( vRes, nRange );
             if ( !fDivBy0 )
                 Wlc_BlastZeroCondition( pNew, Vec_IntArray(vArg1), nRange, vRes );

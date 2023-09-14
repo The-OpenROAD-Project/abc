@@ -149,7 +149,7 @@ int Abc_NodeConeIsConst1( word * pTruth, int nVars )
   SeeAlso     []
 
 ***********************************************************************/
-Dec_Graph_t * Abc_NodeRefactor( Abc_ManRef_t * p, Abc_Obj_t * pNode, Vec_Ptr_t * vFanins, int fUpdateLevel, int fUseZeros, int fUseDcs, int fVerbose )
+Dec_Graph_t * Abc_NodeRefactor( Abc_ManRef_t * p, Abc_Obj_t * pNode, Vec_Ptr_t * vFanins, int nMinSaved, int fUpdateLevel, int fUseZeros, int fUseDcs, int fVerbose )
 {
     extern int    Dec_GraphToNetworkCount( Abc_Obj_t * pRoot, Dec_Graph_t * pGraph, int NodeMax, int LevelMax );
     int fVeryVerbose = 0;
@@ -160,6 +160,8 @@ Dec_Graph_t * Abc_NodeRefactor( Abc_ManRef_t * p, Abc_Obj_t * pNode, Vec_Ptr_t *
     word * pTruth;
     abctime clk;
     int i, nNodesSaved, nNodesAdded, Required;
+    if ( fUseZeros )
+        nMinSaved = 0;
 
     p->nNodesConsidered++;
 
@@ -205,7 +207,8 @@ clk = Abc_Clock();
     nNodesAdded = Dec_GraphToNetworkCount( pNode, pFForm, nNodesSaved, Required );
 p->timeEval += Abc_Clock() - clk;
     // quit if there is no improvement
-    if ( nNodesAdded == -1 || (nNodesAdded == nNodesSaved && !fUseZeros) )
+    //if ( nNodesAdded == -1 || (nNodesAdded == nNodesSaved && !fUseZeros) )
+    if ( nNodesAdded == -1 || nNodesSaved - nNodesAdded < nMinSaved )
     {
         Dec_GraphFree( pFForm );
         return NULL;
@@ -323,7 +326,7 @@ void Abc_NtkManRefPrintStats( Abc_ManRef_t * p )
   SeeAlso     []
 
 ***********************************************************************/
-int Abc_NtkRefactor( Abc_Ntk_t * pNtk, int nNodeSizeMax, int nConeSizeMax, int fUpdateLevel, int fUseZeros, int fUseDcs, int fVerbose )
+int Abc_NtkRefactor( Abc_Ntk_t * pNtk, int nNodeSizeMax, int nMinSaved, int nConeSizeMax, int fUpdateLevel, int fUseZeros, int fUseDcs, int fVerbose )
 {
     extern int           Dec_GraphUpdateNetwork( Abc_Obj_t * pRoot, Dec_Graph_t * pGraph, int fUpdateLevel, int nGain );
     ProgressBar * pProgress;
@@ -371,7 +374,7 @@ clk = Abc_Clock();
 pManRef->timeCut += Abc_Clock() - clk;
         // evaluate this cut
 clk = Abc_Clock();
-        pFForm = Abc_NodeRefactor( pManRef, pNode, vFanins, fUpdateLevel, fUseZeros, fUseDcs, fVerbose );
+        pFForm = Abc_NodeRefactor( pManRef, pNode, vFanins, nMinSaved, fUpdateLevel, fUseZeros, fUseDcs, fVerbose );
 pManRef->timeRes += Abc_Clock() - clk;
         if ( pFForm == NULL )
             continue;

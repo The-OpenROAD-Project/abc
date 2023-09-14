@@ -224,6 +224,7 @@ void Mio_WritePin( FILE * pFile, Mio_Pin_t * pPin, int NameLen, int fAllPins )
 ***********************************************************************/
 void Mio_WriteGate( FILE * pFile, Mio_Gate_t * pGate, int GateLen, int NameLen, int FormLen, int fPrintSops, int fAllPins )
 {
+    //Vec_Int_t * vCover = Vec_IntAlloc( 1 << 10 );  int nLits;
     char Buffer[5000];
     Mio_Pin_t * pPin;
     assert( NameLen+FormLen+2 < 5000 );
@@ -239,7 +240,11 @@ void Mio_WriteGate( FILE * pFile, Mio_Gate_t * pGate, int GateLen, int NameLen, 
     else // different pins
         Mio_GateForEachPin( pGate, pPin )
             Mio_WritePin( pFile, pPin, NameLen, 0 );
+    //nLits = 2*Kit_TruthLitNum((unsigned*)&pGate->uTruth, Mio_GateReadPinNum(pGate), vCover);
+    //if ( nLits != Mio_GateReadArea(pGate) )
+    //    printf( " # %d ", nLits );
     fprintf( pFile, "\n" );
+    //Vec_IntFree( vCover );
 }
 
 /**Function*************************************************************
@@ -1706,7 +1711,7 @@ void Mio_LibraryShortNames( Mio_Library_t * pLib )
 {
     char Buffer[10000];
     Mio_Gate_t * pGate; Mio_Pin_t * pPin;
-    int c = 0, i, nDigits = Abc_Base10Log( Mio_LibraryReadGateNum(pLib) );
+    int c = 0, i; unsigned char nDigits = (unsigned char)Abc_Base10Log( Mio_LibraryReadGateNum(pLib) );
     // itereate through classes
     Mio_LibraryForEachGate( pLib, pGate )
     {

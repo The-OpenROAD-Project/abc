@@ -162,24 +162,34 @@ static inline int Abc_TtBitCount16( int i ) { return Abc_TtBitCount8[i & 0xFF] +
 
 ***********************************************************************/
 // read/write/flip i-th bit of a bit string table:
-static inline int     Abc_TtGetBit( word * p, int i )         { return (int)(p[i>>6] >> (word)(i & 63)) & 1;        }
-static inline void    Abc_TtSetBit( word * p, int i )         { p[i>>6] |= (word)(((word)1)<<(i & 63));             }
-static inline void    Abc_TtXorBit( word * p, int i )         { p[i>>6] ^= (word)(((word)1)<<(i & 63));             }
+static inline int     Abc_TtGetBit( word * p, int k )             { return (int)(p[k>>6] >> (k & 63)) & 1;              }
+static inline void    Abc_TtSetBit( word * p, int k )             { p[k>>6] |= (((word)1)<<(k & 63));                   }
+static inline void    Abc_TtXorBit( word * p, int k )             { p[k>>6] ^= (((word)1)<<(k & 63));                   }
 
 // read/write k-th digit d of a quaternary number:
-static inline int     Abc_TtGetQua( word * p, int k )         { return (int)(p[k>>5] >> (word)((k<<1) & 63)) & 3;   }
-static inline void    Abc_TtSetQua( word * p, int k, int d )  { p[k>>5] |= (word)(((word)d)<<((k<<1) & 63));        }
-static inline void    Abc_TtXorQua( word * p, int k, int d )  { p[k>>5] ^= (word)(((word)d)<<((k<<1) & 63));        }
+static inline int     Abc_TtGetQua( word * p, int k )             { return (int)(p[k>>5] >> ((k<<1) & 63)) & 3;         }
+static inline void    Abc_TtSetQua( word * p, int k, int d )      { p[k>>5] |= (((word)d)<<((k<<1) & 63));              }
+static inline void    Abc_TtXorQua( word * p, int k, int d )      { p[k>>5] ^= (((word)d)<<((k<<1) & 63));              }
 
 // read/write k-th digit d of a hexadecimal number:
-static inline int     Abc_TtGetHex( word * p, int k )         { return (int)(p[k>>4] >> (word)((k<<2) & 63)) & 15;  }
-static inline void    Abc_TtSetHex( word * p, int k, int d )  { p[k>>4] |= (word)(((word)d)<<((k<<2) & 63));        }
-static inline void    Abc_TtXorHex( word * p, int k, int d )  { p[k>>4] ^= (word)(((word)d)<<((k<<2) & 63));        }
+static inline int     Abc_TtGetHex( word * p, int k )             { return (int)(p[k>>4] >> ((k<<2) & 63)) & 15;        }
+static inline void    Abc_TtSetHex( word * p, int k, int d )      { p[k>>4] |= (((word)d)<<((k<<2) & 63));              }
+static inline void    Abc_TtXorHex( word * p, int k, int d )      { p[k>>4] ^= (((word)d)<<((k<<2) & 63));              }
 
 // read/write k-th digit d of a 256-base number:
-static inline int     Abc_TtGet256( word * p, int k )         { return (int)(p[k>>3] >> (word)((k<<3) & 63)) & 255; }
-static inline void    Abc_TtSet256( word * p, int k, int d )  { p[k>>3] |= (word)(((word)d)<<((k<<3) & 63));        }
-static inline void    Abc_TtXor256( word * p, int k, int d )  { p[k>>3] ^= (word)(((word)d)<<((k<<3) & 63));        }
+static inline int     Abc_TtGet256( word * p, int k )             { return (int)(p[k>>3] >> ((k<<3) & 63)) & 255;       }
+static inline void    Abc_TtSet256( word * p, int k, int d )      { p[k>>3] |= (((word)d)<<((k<<3) & 63));              }
+static inline void    Abc_TtXor256( word * p, int k, int d )      { p[k>>3] ^= (((word)d)<<((k<<3) & 63));              }
+
+// read/write k-th digit d of a 2^16-base number:
+static inline int     Abc_TtGet65536( word * p, int k )           { return (int)(p[k>>2] >> ((k<<4) & 63))&0xFFFF;      }
+static inline void    Abc_TtSet65536( word * p, int k, int d )    { p[k>>2] |= (((word)d)<<((k<<4) & 63));              }
+static inline void    Abc_TtXor65536( word * p, int k, int d )    { p[k>>2] ^= (((word)d)<<((k<<4) & 63));              }
+
+// read/write k-th digit d of a 2^2^v-base number:
+static inline int     Abc_TtGetV( word * p, int v, int k )        { return (int)((p[k>>(6-v)] << (64-(1<<v)-((k<<v) & 63))) >> (64-(1<<v)));}
+static inline void    Abc_TtSetV( word * p, int v, int k, int d ) { p[k>>(6-v)] |= (((word)d)<<((k<<v) & 63));          }
+static inline void    Abc_TtXorV( word * p, int v, int k, int d ) { p[k>>(6-v)] ^= (((word)d)<<((k<<v) & 63));          }
 
 /**Function*************************************************************
 
@@ -663,6 +673,65 @@ static inline void Abc_TtIthVar( word * pOut, int iVar, int nVars )
             else
                 pOut[k] = 0;
     }
+}
+static inline void Abc_TtTruth2( word * pOut, word * pIn0, word * pIn1, int Truth, int nWords )
+{
+    int w;
+    assert( Truth >= 0 && Truth <= 0xF );
+    switch ( Truth )
+    {
+        case 0x0 : for ( w = 0; w < nWords; w++ ) pOut[w] =  0;                  break; // 0000
+        case 0x1 : for ( w = 0; w < nWords; w++ ) pOut[w] = ~pIn1[w] & ~pIn0[w]; break; // 0001
+        case 0x2 : for ( w = 0; w < nWords; w++ ) pOut[w] = ~pIn1[w] &  pIn0[w]; break; // 0010
+        case 0x3 : for ( w = 0; w < nWords; w++ ) pOut[w] = ~pIn1[w]           ; break; // 0011
+        case 0x4 : for ( w = 0; w < nWords; w++ ) pOut[w] =  pIn1[w] & ~pIn0[w]; break; // 0100
+        case 0x5 : for ( w = 0; w < nWords; w++ ) pOut[w] =            ~pIn0[w]; break; // 0101
+        case 0x6 : for ( w = 0; w < nWords; w++ ) pOut[w] =  pIn1[w] ^  pIn0[w]; break; // 0110
+        case 0x7 : for ( w = 0; w < nWords; w++ ) pOut[w] = ~pIn1[w] | ~pIn0[w]; break; // 0111
+        case 0x8 : for ( w = 0; w < nWords; w++ ) pOut[w] =  pIn1[w] &  pIn0[w]; break; // 1000
+        case 0x9 : for ( w = 0; w < nWords; w++ ) pOut[w] =  pIn1[w] ^ ~pIn0[w]; break; // 1001
+        case 0xA : for ( w = 0; w < nWords; w++ ) pOut[w] =             pIn0[w]; break; // 1010
+        case 0xB : for ( w = 0; w < nWords; w++ ) pOut[w] = ~pIn1[w] |  pIn0[w]; break; // 1011
+        case 0xC : for ( w = 0; w < nWords; w++ ) pOut[w] =  pIn1[w]           ; break; // 1100
+        case 0xD : for ( w = 0; w < nWords; w++ ) pOut[w] =  pIn1[w] | ~pIn0[w]; break; // 1101
+        case 0xE : for ( w = 0; w < nWords; w++ ) pOut[w] =  pIn1[w] |  pIn0[w]; break; // 1110
+        case 0xF : for ( w = 0; w < nWords; w++ ) pOut[w] = ~(word)0;            break; // 1111
+        default  : assert( 0 );
+    }
+}
+static inline void Abc_TtTruth4( word Entry, word ** pNodes, word * pOut, int nWords, int fCompl )
+{
+    unsigned First  = (unsigned)Entry;
+    unsigned Second = (unsigned)(Entry >> 32);
+    int i, k = 5;
+    for ( i = 0; i < 4; i++ )
+    {
+        int Lit0, Lit1, Pair = (First >> (i*8)) & 0xFF;
+        if ( Pair == 0 )
+            break;
+        Lit0 = Pair & 0xF;
+        Lit1 = Pair >> 4;
+        assert( Lit0 != Lit1 );
+        if ( Lit0 < Lit1 )
+            Abc_TtAndCompl( pNodes[k++], pNodes[Lit0 >> 1], Lit0 & 1, pNodes[Lit1 >> 1], Lit1 & 1, nWords );
+        else
+            Abc_TtXor( pNodes[k++], pNodes[Lit0 >> 1], pNodes[Lit1 >> 1], nWords, (Lit0 & 1) ^ (Lit1 & 1) );
+    }
+    for ( i = 0; i < 3; i++ )
+    {
+        int Lit0, Lit1, Pair = (Second >> (i*10)) & 0x3FF;
+        if ( Pair == 0 )
+            break;
+        Lit0 = Pair & 0x1F;
+        Lit1 = Pair >> 5;
+        assert( Lit0 != Lit1 );
+        if ( Lit0 < Lit1 )
+            Abc_TtAndCompl( pNodes[k++], pNodes[Lit0 >> 1], Lit0 & 1, pNodes[Lit1 >> 1], Lit1 & 1, nWords );
+        else
+            Abc_TtXor( pNodes[k++], pNodes[Lit0 >> 1], pNodes[Lit1 >> 1], nWords, (Lit0 & 1) ^ (Lit1 & 1) );
+    }
+    assert( k > 5 );
+    Abc_TtCopy( pOut, pNodes[k-1], nWords, (int)(Entry >> 62) ^ fCompl );
 }
 
 /**Function*************************************************************
@@ -1337,30 +1406,45 @@ static inline void Abc_TtPrintHex( word * pTruth, int nVars )
 {
     word * pThis, * pLimit = pTruth + Abc_TtWordNum(nVars);
     int k;
-    assert( nVars >= 2 );
-    for ( pThis = pTruth; pThis < pLimit; pThis++ )
-        for ( k = 0; k < 16; k++ )
-            printf( "%c", Abc_TtPrintDigit((int)(pThis[0] >> (k << 2)) & 15) );
+    if ( nVars < 2 )
+        printf( "%c", Abc_TtPrintDigit((int)pTruth[0] & 15) );
+    else
+    {
+        assert( nVars >= 2 );
+        for ( pThis = pTruth; pThis < pLimit; pThis++ )
+            for ( k = 0; k < 16; k++ )
+                printf( "%c", Abc_TtPrintDigit((int)(pThis[0] >> (k << 2)) & 15) );
+    }
     printf( "\n" );
 }
 static inline void Abc_TtPrintHexRev( FILE * pFile, word * pTruth, int nVars )
 {
     word * pThis;
     int k, StartK = nVars >= 6 ? 16 : (1 << (nVars - 2));
-    assert( nVars >= 2 );
-    for ( pThis = pTruth + Abc_TtWordNum(nVars) - 1; pThis >= pTruth; pThis-- )
-        for ( k = StartK - 1; k >= 0; k-- )
-            fprintf( pFile, "%c", Abc_TtPrintDigit((int)(pThis[0] >> (k << 2)) & 15) );
+    if ( nVars < 2 )
+        fprintf( pFile, "%c", Abc_TtPrintDigit((int)pTruth[0] & 15) );
+    else
+    {
+        assert( nVars >= 2 );
+        for ( pThis = pTruth + Abc_TtWordNum(nVars) - 1; pThis >= pTruth; pThis-- )
+            for ( k = StartK - 1; k >= 0; k-- )
+                fprintf( pFile, "%c", Abc_TtPrintDigit((int)(pThis[0] >> (k << 2)) & 15) );
+    }
 //    printf( "\n" );
 }
 static inline void Abc_TtPrintHexSpecial( word * pTruth, int nVars )
 {
     word * pThis;
     int k;
-    assert( nVars >= 2 );
-    for ( pThis = pTruth + Abc_TtWordNum(nVars) - 1; pThis >= pTruth; pThis-- )
-        for ( k = 0; k < 16; k++ )
-            printf( "%c", Abc_TtPrintDigit((int)(pThis[0] >> (k << 2)) & 15) );
+    if ( nVars < 2 )
+        printf( "%c", Abc_TtPrintDigit((int)pTruth[0] & 15) );
+    else
+    {
+        assert( nVars >= 2 );
+        for ( pThis = pTruth + Abc_TtWordNum(nVars) - 1; pThis >= pTruth; pThis-- )
+            for ( k = 0; k < 16; k++ )
+                printf( "%c", Abc_TtPrintDigit((int)(pThis[0] >> (k << 2)) & 15) );
+    }
     printf( "\n" );
 }
 static inline int Abc_TtWriteHexRev( char * pStr, word * pTruth, int nVars )
@@ -1368,10 +1452,15 @@ static inline int Abc_TtWriteHexRev( char * pStr, word * pTruth, int nVars )
     word * pThis;
     char * pStrInit = pStr;
     int k, StartK = nVars >= 6 ? 16 : (1 << (nVars - 2));
-    assert( nVars >= 2 );
-    for ( pThis = pTruth + Abc_TtWordNum(nVars) - 1; pThis >= pTruth; pThis-- )
-        for ( k = StartK - 1; k >= 0; k-- )
-            *pStr++ = Abc_TtPrintDigit( (int)(pThis[0] >> (k << 2)) & 15 );
+    if ( nVars < 2 )
+        *pStr++ = Abc_TtPrintDigit((int)pTruth[0] & 15);
+    else
+    {
+        assert( nVars >= 2 );
+        for ( pThis = pTruth + Abc_TtWordNum(nVars) - 1; pThis >= pTruth; pThis-- )
+            for ( k = StartK - 1; k >= 0; k-- )
+                *pStr++ = Abc_TtPrintDigit( (int)(pThis[0] >> (k << 2)) & 15 );
+    }
     return pStr - pStrInit;
 }
 static inline void Abc_TtPrintHexArrayRev( FILE * pFile, word * pTruth, int nDigits )
@@ -1461,6 +1550,20 @@ static inline int Abc_TtReadHexNumber( word * pTruth, char * pString )
   SeeAlso     []
 
 ***********************************************************************/
+static inline void Abc_TtPrintBits( word * pTruth, int nBits )
+{
+    int k;
+    for ( k = 0; k < nBits; k++ )
+        printf( "%d", Abc_InfoHasBit( (unsigned *)pTruth, k ) );
+    printf( "\n" );
+}
+static inline void Abc_TtPrintBits2( word * pTruth, int nBits )
+{
+    int k;
+    for ( k = nBits-1; k >= 0; k-- )
+        printf( "%d", Abc_InfoHasBit( (unsigned *)pTruth, k ) );
+    printf( "\n" );
+}
 static inline void Abc_TtPrintBinary( word * pTruth, int nVars )
 {
     word * pThis, * pLimit = pTruth + Abc_TtWordNum(nVars);
@@ -1470,6 +1573,24 @@ static inline void Abc_TtPrintBinary( word * pTruth, int nVars )
         for ( k = 0; k < Limit; k++ )
             printf( "%d", Abc_InfoHasBit( (unsigned *)pThis, k ) );
     printf( "\n" );
+}
+static inline void Abc_TtPrintBinary1( FILE * pFile, word * pTruth, int nVars )
+{
+    word * pThis, * pLimit = pTruth + Abc_TtWordNum(nVars);
+    int k, Limit = Abc_MinInt( 64, (1 << nVars) );
+    assert( nVars >= 2 );
+    for ( pThis = pTruth; pThis < pLimit; pThis++ )
+        for ( k = 0; k < Limit; k++ )
+            fprintf( pFile, "%d", Abc_InfoHasBit( (unsigned *)pThis, k ) );
+}
+static inline void Abc_TtPrintBinary2( FILE * pFile, word * pTruth, int nVars )
+{
+    word * pThis;
+    int k, Limit = Abc_MinInt( 64, (1 << nVars) );
+    assert( nVars >= 2 );
+    for ( pThis = pTruth + Abc_TtWordNum(nVars) - 1; pThis >= pTruth; pThis-- )
+        for ( k = Limit-1; k >= 0; k-- )
+            fprintf( pFile, "%d", Abc_InfoHasBit( (unsigned *)pThis, k ) );
 }
 
 /**Function*************************************************************
@@ -1571,7 +1692,31 @@ static inline int Abc_Tt6SupportAndSize( word t, int nVars, int * pSuppSize )
             Supp |= (1 << v), (*pSuppSize)++;
     return Supp;
 }
-
+static inline int Abc_Tt6Check1( word t, int nVars )
+{
+    int n, v, u;
+    for ( n = 0; n < 2; n++ )
+    for ( v = 0; v < nVars; v++ )
+    {
+        word Cof = n ? Abc_Tt6Cofactor1(t, v) : Abc_Tt6Cofactor0(t, v);
+        for ( u = 0; u < nVars; u++ )
+            if ( v != u && !Abc_Tt6HasVar(Cof, u) )
+                return 1;
+    }
+    return 0;
+}
+static inline int Abc_Tt6Check2( word t, int nVars )
+{
+    int n, v;
+    for ( n = 0; n < 2; n++ )
+    for ( v = 0; v < nVars; v++ )
+    {
+        word Cof = n ? Abc_Tt6Cofactor1(t, v) : Abc_Tt6Cofactor0(t, v);
+        if ( Cof == 0 || ~Cof == 0 )
+            return 1;
+    }
+    return 0;
+}
 /**Function*************************************************************
 
   Synopsis    [Checks if there is a var whose both cofs have supp <= nSuppLim.]

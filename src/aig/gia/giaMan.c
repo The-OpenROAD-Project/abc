@@ -803,7 +803,7 @@ void Gia_ManPrintNpnClasses( Gia_Man_t * p )
     Vec_Int_t * vLeaves, * vTruth, * vVisited;
     int * pLutClass, ClassCounts[222] = {0};
     int i, k, iFan, Class, OtherClasses, OtherClasses2, nTotal, Counter, Counter2;
-    unsigned * pTruth;
+    unsigned * pTruth; int nLutSize = 0;
     assert( Gia_ManHasMapping(p) );
     assert(  Gia_ManLutSizeMax( p ) <= 4 );
     vLeaves   = Vec_IntAlloc( 100 );
@@ -813,6 +813,7 @@ void Gia_ManPrintNpnClasses( Gia_Man_t * p )
     Gia_ManCleanTruth( p );
     Gia_ManForEachLut( p, i )
     {
+        nLutSize = Abc_MaxInt( nLutSize, Gia_ObjLutSize(p,i) );
         if ( Gia_ObjLutSize(p,i) > 4 )
             continue;
         Vec_IntClear( vLeaves );
@@ -872,6 +873,55 @@ void Gia_ManPrintNpnClasses( Gia_Man_t * p )
     Abc_Print( 1, "Approximate number of 4:1 MUX structures: All = %6d  (%7.2f %%)  MFFC = %6d  (%7.2f %%)\n", 
         OtherClasses,  100.0 * OtherClasses  / (nTotal+1),
         OtherClasses2, 100.0 * OtherClasses2 / (nTotal+1) );
+    // print information about LUT pairs
+    if ( nLutSize <= 4 )
+    {
+        int nTopPairs = 100, nTopShow = 30;
+        int i, j, k, iFan, * pVec = NULL;
+        Vec_Int_t * vPairs = Vec_IntAlloc( 3 * nTopPairs );
+        Gia_ManForEachLut( p, j ) {
+            Gia_LutForEachFanin( p, j, iFan, k ) {
+                int Num1 = pLutClass[iFan];
+                int Num2 = pLutClass[j];
+                assert( Vec_IntSize(vPairs) % 3 == 0 );
+                for ( i = 0; i < Vec_IntSize(vPairs); i += 3 )
+                    if ( Vec_IntEntry(vPairs, i+0) == Num1 && Vec_IntEntry(vPairs, i+1) == Num2 )
+                        break;
+                if ( i == Vec_IntSize(vPairs) ) {
+                    if ( Vec_IntSize(vPairs) < 3*nTopPairs ) {
+                        Vec_IntPush( vPairs, Num1 );
+                        Vec_IntPush( vPairs, Num2 );
+                        Vec_IntPush( vPairs, 1 );
+                    }
+                    continue;
+                }
+                // found this pair
+                assert( Vec_IntEntry(vPairs, i+0) == Num1 );
+                assert( Vec_IntEntry(vPairs, i+1) == Num2 );                
+                Vec_IntAddToEntry( vPairs, i+2, 1 );
+                // sort 
+                pVec = Vec_IntArray( vPairs );
+                while ( i > 0 && pVec[i+2] > pVec[i-1] ) {
+                    ABC_SWAP( int, pVec[i+0], pVec[i-3] )
+                    ABC_SWAP( int, pVec[i+1], pVec[i-2] )
+                    ABC_SWAP( int, pVec[i+2], pVec[i-1] )
+                    i -= 3;
+                }
+                while ( i < Vec_IntSize(vPairs) - 3 && pVec[i+2] < pVec[i+5] ) {
+                    ABC_SWAP( int, pVec[i+0], pVec[i+3] )
+                    ABC_SWAP( int, pVec[i+1], pVec[i+4] )
+                    ABC_SWAP( int, pVec[i+2], pVec[i+5] )
+                    i += 3;
+                    assert( 0 );
+                }                
+            }
+        }
+        pVec = Vec_IntArray( vPairs );
+        nTopShow = Abc_MinInt( nTopShow, Vec_IntSize(vPairs)/3 );
+        for ( i = 0; i < 3*nTopShow; i += 3 )
+            printf( "%3d : (%3d %3d) x %3d\n", i/3, pVec[i+0], pVec[i+1], pVec[i+2] );
+        Vec_IntFree( vPairs );
+    }    
     ABC_FREE( pLutClass );
 }
 
@@ -1193,6 +1243,90 @@ void Gia_ManDfsSlacksPrint( Gia_Man_t * p )
 
 /**Function*************************************************************
 
+  Synopsis    [Dump interface module]
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+void Gia_ManWriteNamesInter( FILE * pFile, char c, int n, int Start, int Skip, int nRegs )
+{
+    int Length = Start, i, fFirst = 1; 
+    char pName[100];
+    for ( i = 0; i < n-nRegs; i++ )
+    {
+        sprintf( pName, "%c[%d]", c, i );
+        Length += strlen(pName) + 2;
+        if ( Length > 60 )
+        {
+            fprintf( pFile, ",\n    " );
+            Length = Skip;
+            fFirst = 1;
+        }
+        fprintf( pFile, "%s%s", fFirst ? "":", ", pName );
+        fFirst = 0;
+    }
+    for ( i = n-nRegs; i < n; i++ )
+    {
+        sprintf( pName, "%c%c[%d]", c, c, i );
+        Length += strlen(pName) + 2;
+        if ( Length > 60 )
+        {
+            fprintf( pFile, ",\n    " );
+            Length = Skip;
+            fFirst = 1;
+        }
+        fprintf( pFile, "%s%s", fFirst ? "":", ", pName );
+        fFirst = 0;
+    }}
+void Gia_ManDumpModuleName( FILE * pFile, char * pName )
+{
+    int i;
+    for ( i = 0; i < (int)strlen(pName); i++ )
+    if ( isalpha(pName[i]) || isdigit(pName[i]) )
+        fprintf( pFile, "%c", pName[i] );
+    else
+        fprintf( pFile, "_" );
+}
+void Gia_ManDumpInterface( Gia_Man_t * p, FILE * pFile )
+{
+    int fPrintClk = 0;
+    fprintf( pFile, "module " );
+    Gia_ManDumpModuleName( pFile, p->pName );
+    fprintf( pFile, "_wrapper" );
+    fprintf( pFile, " (%s i, o );\n\n", fPrintClk && Gia_ManRegNum(p) ? " clk," : "" );
+    if ( fPrintClk && Gia_ManRegNum(p) )
+    fprintf( pFile, "  input clk;\n" );
+    fprintf( pFile, "  input  [%d:0] i;\n",   Gia_ManPiNum(p)-1 );
+    fprintf( pFile, "  output [%d:0] o;\n\n", Gia_ManPoNum(p)-1 );
+
+    if ( Gia_ManRegNum(p) ) {
+        fprintf( pFile, "  wire [%d:%d] ii;\n",   Gia_ManCiNum(p)-1, Gia_ManPiNum(p) );
+        fprintf( pFile, "  wire [%d:%d] oo;\n\n", Gia_ManCoNum(p)-1, Gia_ManPoNum(p) );    
+        fprintf( pFile, "  always @ (posedge %s)\n    ii <= oo;\n\n", fPrintClk ? "clk" : "i[0]" );
+    }
+
+    fprintf( pFile, "  " );
+    Gia_ManDumpModuleName( pFile, p->pName );
+    fprintf( pFile, " " );
+    Gia_ManDumpModuleName( pFile, p->pName );
+    fprintf( pFile, "_inst" );
+
+    fprintf( pFile, " (\n    " );
+    Gia_ManWriteNamesInter( pFile, 'i', Gia_ManCiNum(p), 4, 4, Gia_ManRegNum(p) );
+    fprintf( pFile, ",\n    " );
+    Gia_ManWriteNamesInter( pFile, 'o', Gia_ManCoNum(p), 4, 4, Gia_ManRegNum(p) );
+    fprintf( pFile, "\n  );\n\n" );
+
+    fprintf( pFile, "endmodule\n\n" );
+}
+
+
+/**Function*************************************************************
+
   Synopsis    [Compute arrival/required times.]
 
   Description []
@@ -1273,26 +1407,25 @@ void Gia_ManWriteNames( FILE * pFile, char c, int n, Vec_Ptr_t * vNames, int Sta
         fFirst = 0;
     }
 }
-void Gia_ManDumpVerilog( Gia_Man_t * p, char * pFileName, Vec_Int_t * vObjs, int fVerBufs )
+void Gia_ManDumpVerilog( Gia_Man_t * p, char * pFileName, Vec_Int_t * vObjs, int fVerBufs, int fInter )
 {
-    FILE * pFile;
     Gia_Obj_t * pObj;
     Vec_Bit_t * vInvs, * vUsed;
     int nDigits  = Abc_Base10Log( Gia_ManObjNum(p) );
     int nDigitsI = Abc_Base10Log( Gia_ManPiNum(p) );
     int nDigitsO = Abc_Base10Log( Gia_ManPoNum(p) );
-    int i, k, iObj;
-    if ( Gia_ManRegNum(p) )
-    {
-        printf( "Currently cannot write sequential AIG.\n" );
-        return;
-    }
-    pFile = fopen( pFileName, "wb" );
+    int i, k, iObj, nRegs = Gia_ManRegNum(p);
+    FILE * pFile = fopen( pFileName, "wb" );
     if ( pFile == NULL )
     {
         printf( "Cannot open output file \"%s\".\n", pFileName );
         return;
     }
+
+    if ( fInter || nRegs ) 
+        Gia_ManDumpInterface( p, pFile );
+    //Gia_ManSetRegNum( p, 0 );
+    p->nRegs = 0;
 
     vInvs = Gia_ManGenUsed( p, 0 );
     vUsed = Gia_ManGenUsed( p, 1 );
@@ -1300,11 +1433,7 @@ void Gia_ManDumpVerilog( Gia_Man_t * p, char * pFileName, Vec_Int_t * vObjs, int
     //fprintf( pFile, "// This Verilog file is written by ABC on %s\n\n", Extra_TimeStamp() );
 
     fprintf( pFile, "module " );
-    for ( i = 0; i < (int)strlen(p->pName); i++ )
-        if ( isalpha(p->pName[i]) || isdigit(p->pName[i]) )
-            fprintf( pFile, "%c", p->pName[i] );
-        else
-            fprintf( pFile, "_" );
+    Gia_ManDumpModuleName( pFile, p->pName );
 
     if ( fVerBufs )
     {
@@ -1455,6 +1584,8 @@ void Gia_ManDumpVerilog( Gia_Man_t * p, char * pFileName, Vec_Int_t * vObjs, int
 
     Vec_BitFree( vInvs );
     Vec_BitFree( vUsed );
+
+    Gia_ManSetRegNum( p, nRegs );
 }
 
 ////////////////////////////////////////////////////////////////////////

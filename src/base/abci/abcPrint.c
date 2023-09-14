@@ -46,7 +46,7 @@ ABC_NAMESPACE_IMPL_START
 
 abctime s_MappingTime = 0;
 int s_MappingMem = 0;
-abctime s_ResubTime = 0;
+//abctime s_ResubTime = 0;
 abctime s_ResynTime = 0;
 
 ////////////////////////////////////////////////////////////////////////
@@ -1080,26 +1080,6 @@ void Abc_NtkPrintMffc( FILE * pFile, Abc_Ntk_t * pNtk )
   SeeAlso     []
 
 ***********************************************************************/
-void Abc_NtkPrintFactor( FILE * pFile, Abc_Ntk_t * pNtk, int fUseRealNames )
-{
-    Abc_Obj_t * pNode;
-    int i;
-    assert( Abc_NtkIsSopLogic(pNtk) );
-    Abc_NtkForEachNode( pNtk, pNode, i )
-        Abc_NodePrintFactor( pFile, pNode, fUseRealNames );
-}
-
-/**Function*************************************************************
-
-  Synopsis    [Prints the factored form of one node.]
-
-  Description []
-
-  SideEffects []
-
-  SeeAlso     []
-
-***********************************************************************/
 void Abc_NodePrintFactor( FILE * pFile, Abc_Obj_t * pNode, int fUseRealNames )
 {
     Dec_Graph_t * pGraph;
@@ -1128,8 +1108,86 @@ void Abc_NodePrintFactor( FILE * pFile, Abc_Obj_t * pNode, int fUseRealNames )
         Dec_GraphPrint( stdout, pGraph, (char **)NULL, Abc_ObjName(pNode) );
     Dec_GraphFree( pGraph );
 }
+void Abc_NtkPrintFactor( FILE * pFile, Abc_Ntk_t * pNtk, int fUseRealNames )
+{
+    Abc_Obj_t * pNode;
+    int i;
+    assert( Abc_NtkIsSopLogic(pNtk) );
+    Abc_NtkForEachNode( pNtk, pNode, i )
+        Abc_NodePrintFactor( pFile, pNode, fUseRealNames );
+}
 
+/**Function*************************************************************
 
+  Synopsis    [Prints the SOPs of one node.]
+
+  Description []
+
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+void Abc_NodePrintSop( FILE * pFile, Abc_Obj_t * pNode, int fUseRealNames )
+{
+    Vec_Ptr_t * vNamesIn = NULL;
+    char * pCube, * pCur, * pSop; int nVars;
+    if ( Abc_ObjIsCo(pNode) )
+        pNode = Abc_ObjFanin0(pNode);
+    if ( Abc_ObjIsPi(pNode) )
+    {
+        fprintf( pFile, "Skipping the PI node.\n" );
+        return;
+    }
+    if ( Abc_ObjIsLatch(pNode) )
+    {
+        fprintf( pFile, "Skipping the latch.\n" );
+        return;
+    }
+    assert( Abc_ObjIsNode(pNode) );
+    pSop = (char *)pNode->pData;
+    nVars = Abc_SopGetVarNum( pSop );
+    if ( nVars == 0 )
+    {
+        fprintf( pFile, "%s = ", Abc_ObjName(pNode) );
+        fprintf( pFile, "Constant %d", Abc_SopGetPhase(pSop) );
+        return;
+    }
+    if ( !Abc_SopGetPhase(pSop) )
+        fprintf( pFile, "!" );
+    fprintf( pFile, "%s = ", Abc_ObjName(pNode) );
+    if ( fUseRealNames )
+        vNamesIn = Abc_NodeGetFaninNames(pNode);
+    Abc_SopForEachCube( pSop, nVars, pCube )
+    {
+        if ( pCube != pSop ) 
+            fprintf( pFile, " +" );
+        if ( vNamesIn )
+        {
+            for ( pCur = pCube; *pCur != ' '; pCur++ )
+                if ( *pCur != '-' )
+                    fprintf( pFile, " %s%s", *pCur == '0' ? "!" : "",  (char *)Vec_PtrEntry(vNamesIn, pCur-pCube) );
+        }
+        else
+        {
+            for ( pCur = pCube; *pCur != ' '; pCur++ )
+                if ( *pCur != '-' )
+                    fprintf( pFile, " %s%c", *pCur == '0' ? "!" : "",  (char)('a' + pCur-pCube) );
+        }
+    }
+    fprintf( pFile, "\n" );
+    if ( vNamesIn )
+        Abc_NodeFreeNames( vNamesIn );
+}
+void Abc_NtkPrintSop( FILE * pFile, Abc_Ntk_t * pNtk, int fUseRealNames )
+{
+    Abc_Obj_t * pNode;
+    int i;
+    assert( Abc_NtkIsSopLogic(pNtk) );
+    Abc_NtkForEachNode( pNtk, pNode, i )
+        Abc_NodePrintSop( pFile, pNode, fUseRealNames );
+}
+ 
 /**Function*************************************************************
 
   Synopsis    [Prints the level stats of the PO node.]
@@ -1141,6 +1199,17 @@ void Abc_NodePrintFactor( FILE * pFile, Abc_Obj_t * pNode, int fUseRealNames )
   SeeAlso     []
 
 ***********************************************************************/
+char * Abc_NodeGetPrintName( Abc_Obj_t * pObj )
+{
+    Abc_Obj_t * pFan, * pFanout = NULL; int k, nPos = 0;
+    if ( !Abc_ObjIsNode(pObj) ) 
+        return Abc_ObjName(pObj);
+    Abc_ObjForEachFanout( pObj, pFan, k ) {
+        if ( Abc_ObjIsPo(pFan) )
+            pFanout = pFan, nPos++;
+    }
+    return Abc_ObjName(nPos == 1 ? pFanout : pObj);
+}
 void Abc_NtkPrintLevel( FILE * pFile, Abc_Ntk_t * pNtk, int fProfile, int fListNodes, int fVerbose )
 {
     Abc_Obj_t * pNode;
@@ -1156,7 +1225,7 @@ void Abc_NtkPrintLevel( FILE * pFile, Abc_Ntk_t * pNtk, int fProfile, int fListN
             printf( "%2d : ", i );
             Abc_NtkForEachNode( pNtk, pNode, k )
                 if ( (int)pNode->Level == i )
-                    printf( " %s", Abc_ObjName(pNode) );
+                    printf( " %s", Abc_NodeGetPrintName(pNode) );
             printf( "\n" );
         }
         return;

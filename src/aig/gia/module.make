@@ -69,6 +69,7 @@ SRC +=    src/aig/gia/giaAig.c \
     src/aig/gia/giaResub.c \
     src/aig/gia/giaResub2.c \
     src/aig/gia/giaResub3.c \
+    src/aig/gia/giaResub6.c \
     src/aig/gia/giaRetime.c \
     src/aig/gia/giaRex.c \
     src/aig/gia/giaSatEdge.c \
@@ -76,6 +77,7 @@ SRC +=    src/aig/gia/giaAig.c \
     src/aig/gia/giaSatLut.c \
     src/aig/gia/giaSatMap.c \
     src/aig/gia/giaSatoko.c \
+    src/aig/gia/giaSatSyn.c \
     src/aig/gia/giaSat3.c \
     src/aig/gia/giaScl.c \
     src/aig/gia/giaScript.c \
@@ -83,6 +85,7 @@ SRC +=    src/aig/gia/giaAig.c \
     src/aig/gia/giaShrink.c \
     src/aig/gia/giaShrink6.c \
     src/aig/gia/giaShrink7.c \
+    src/aig/gia/giaSif.c \
     src/aig/gia/giaSim.c \
     src/aig/gia/giaSim2.c \
     src/aig/gia/giaSimBase.c \
@@ -100,7 +103,10 @@ SRC +=    src/aig/gia/giaAig.c \
     src/aig/gia/giaSwitch.c \
     src/aig/gia/giaTim.c \
     src/aig/gia/giaTis.c \
+    src/aig/gia/giaTransduction.cpp \
+    src/aig/gia/giaTranStoch.c \
     src/aig/gia/giaTruth.c \
     src/aig/gia/giaTsim.c \
+    src/aig/gia/giaTtopt.cpp \
     src/aig/gia/giaUnate.c \
     src/aig/gia/giaUtil.c

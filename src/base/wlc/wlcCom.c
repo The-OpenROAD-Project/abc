@@ -88,7 +88,7 @@ void Wlc_Init( Abc_Frame_t * pAbc )
     Cmd_CommandAdd( pAbc, "Word level", "%memabs2",     Abc_CommandMemAbs2,    0 );
     Cmd_CommandAdd( pAbc, "Word level", "%blast",       Abc_CommandBlast,      0 );
     Cmd_CommandAdd( pAbc, "Word level", "%blastmem",    Abc_CommandBlastMem,   0 );
-    Cmd_CommandAdd( pAbc, "Word level", "%graft",       Abc_CommandGraft,      0 );
+//    Cmd_CommandAdd( pAbc, "Word level", "%graft",       Abc_CommandGraft,      0 );
     Cmd_CommandAdd( pAbc, "Word level", "%retime",      Abc_CommandRetime,     0 );
     Cmd_CommandAdd( pAbc, "Word level", "%profile",     Abc_CommandProfile,    0 );
     Cmd_CommandAdd( pAbc, "Word level", "%short_names", Abc_CommandShortNames, 0 );
@@ -1222,7 +1222,7 @@ usage:
     Abc_Print( -2, "\t-o     : toggle using additional POs on the word-level boundaries [default = %s]\n", pPar->fAddOutputs? "yes": "no" );
     Abc_Print( -2, "\t-m     : toggle creating boxes for all multipliers in the design [default = %s]\n",  pPar->fMulti? "yes": "no" );
     Abc_Print( -2, "\t-b     : toggle generating radix-4 Booth multipliers [default = %s]\n",              pPar->fBooth? "yes": "no" );
-    Abc_Print( -2, "\t-q     : toggle generating non-restoring square root [default = %s]\n",              pPar->fNonRest? "yes": "no" );
+    Abc_Print( -2, "\t-q     : toggle generating non-restoring square root and divider [default = %s]\n",  pPar->fNonRest? "yes": "no" );
     Abc_Print( -2, "\t-a     : toggle generating carry-look-ahead adder [default = %s]\n",                 pPar->fCla? "yes": "no" );
     Abc_Print( -2, "\t-y     : toggle creating different divide-by-0 condition [default = %s]\n",          pPar->fDivBy0? "yes": "no" );
     Abc_Print( -2, "\t-d     : toggle creating dual-output multi-output miter [default = %s]\n",           pPar->fCreateMiter? "yes": "no" );

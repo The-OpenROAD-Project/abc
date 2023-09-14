@@ -558,11 +558,12 @@ void Gia_ManPrintMappingStats( Gia_Man_t * p, char * pDumpFile )
         FILE * pTable = fopen( pDumpFile, "a+" );
         if ( strcmp( FileNameOld, p->pName ) )
         {
-            sprintf( FileNameOld, "%s", p->pName );
+            sprintf( FileNameOld, "%s_out", p->pName );
             fprintf( pTable, "\n" );
             fprintf( pTable, "%s ", p->pName );
             fprintf( pTable, " " );
-            fprintf( pTable, "%d ", Gia_ManAndNum(p) );
+            //fprintf( pTable, "%d ", Gia_ManAndNum(p) );
+            fprintf( pTable, "%d ", Gia_ManRegNum(p) );
             fprintf( pTable, "%d ", nLuts           );
             fprintf( pTable, "%d ", Gia_ManLutLevelWithBoxes(p) );
             //fprintf( pTable, "%d ", Gia_ManRegBoxNum(p) );
@@ -575,11 +576,13 @@ void Gia_ManPrintMappingStats( Gia_Man_t * p, char * pDumpFile )
             //printf( "This part of the code is currently not used.\n" );
             //assert( 0 );
             fprintf( pTable, " " );
+            fprintf( pTable, " " );
+            fprintf( pTable, "%d ", Gia_ManRegNum(p) );
             fprintf( pTable, "%d ", nLuts           );
             fprintf( pTable, "%d ", Gia_ManLutLevelWithBoxes(p) );
             //fprintf( pTable, "%d ", Gia_ManRegBoxNum(p) );
             //fprintf( pTable, "%d ", Gia_ManNonRegBoxNum(p) );
-            fprintf( pTable, "%.2f", 1.0*(Abc_Clock() - clk)/CLOCKS_PER_SEC );
+//            fprintf( pTable, "%.2f", 1.0*(Abc_Clock() - clk)/CLOCKS_PER_SEC );
             clk = Abc_Clock();
         }
         fclose( pTable );
@@ -1891,7 +1894,7 @@ Gia_Man_t * Gia_ManFromIfLogic( If_Man_t * pIfMan )
             if ( !pIfMan->pPars->fUseTtPerm && !pIfMan->pPars->fDelayOpt && !pIfMan->pPars->fDelayOptLut && !pIfMan->pPars->fDsdBalance && 
                  !pIfMan->pPars->pLutStruct && !pIfMan->pPars->fUserRecLib && !pIfMan->pPars->fUserSesLib && !pIfMan->pPars->nGateSize && 
                  !pIfMan->pPars->fEnableCheck75 && !pIfMan->pPars->fEnableCheck75u && !pIfMan->pPars->fEnableCheck07 && !pIfMan->pPars->fUseDsdTune && 
-                 !pIfMan->pPars->fUseCofVars && !pIfMan->pPars->fUseAndVars )
+                 !pIfMan->pPars->fUseCofVars && !pIfMan->pPars->fUseAndVars && !pIfMan->pPars->fUseCheck1 && !pIfMan->pPars->fUseCheck2 )
                 If_CutRotatePins( pIfMan, pCutBest );
             // collect leaves of the best cut
             Vec_IntClear( vLeaves );
