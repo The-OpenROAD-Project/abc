@@ -166,7 +166,7 @@ void If_ObjPerformMappingAnd( If_Man_t * p, If_Obj_t * pObj, int Mode, int fPrep
     If_Cut_t * pCut0R, * pCut1R;
     int fFunc0R, fFunc1R;
     int i, k, v, iCutDsd, fChange;
-    int fSave0 = p->pPars->fDelayOpt || p->pPars->fDelayOptLut || p->pPars->fDsdBalance || p->pPars->fUserRecLib || p->pPars->fUserSesLib || 
+    int fSave0 = p->pPars->fDelayOpt || p->pPars->fDelayOptLut || p->pPars->fDsdBalance || p->pPars->fUserRecLib || p->pPars->fUserSesLib || p->pPars->fUserLutDec ||
         p->pPars->fUseDsdTune || p->pPars->fUseCofVars || p->pPars->fUseAndVars || p->pPars->fUse34Spec || p->pPars->pLutStruct || p->pPars->pFuncCell2 || p->pPars->fUseCheck1 || p->pPars->fUseCheck2;
     int fUseAndCut = (p->pPars->nAndDelay > 0) || (p->pPars->nAndArea > 0);
     assert( !If_ObjIsAnd(pObj->pFanin0) || pObj->pFanin0->pCutSet->nCuts > 0 );
@@ -207,6 +207,10 @@ void If_ObjPerformMappingAnd( If_Man_t * p, If_Obj_t * pObj, int Mode, int fPrep
                 pCut->Cost = IF_COST_MAX;
                 pCut->fUseless = 1;
             }
+        }
+        else if ( p->pPars->fUserLutDec )
+        {
+            pCut->Delay = If_LutDecReEval( p, pCut ); 
         }
         else if ( p->pPars->fDelayOptLut )
             pCut->Delay = If_CutLutBalanceEval( p, pCut );
@@ -264,6 +268,8 @@ void If_ObjPerformMappingAnd( If_Man_t * p, If_Obj_t * pObj, int Mode, int fPrep
             if ( !If_CutMergeOrdered( p, pCut0, pCut1, pCut ) )
                 continue;
         }
+        if ( p->pPars->fUserLutDec && !fFirst && pCut->nLeaves > p->pPars->nLutDecSize )
+            continue;
         if ( pObj->fSpec && pCut->nLeaves == (unsigned)p->pPars->nLutSize )
             continue;
         p->nCutsMerged++;
@@ -422,7 +428,12 @@ void If_ObjPerformMappingAnd( If_Man_t * p, If_Obj_t * pObj, int Mode, int fPrep
         else if ( p->pPars->fDsdBalance )
             pCut->Delay = If_CutDsdBalanceEval( p, pCut, NULL );
         else if ( p->pPars->fUserRecLib )
-            pCut->Delay = If_CutDelayRecCost3( p, pCut, pObj ); 
+            pCut->Delay = If_CutDelayRecCost3( p, pCut, pObj );
+        else if ( p->pPars->fUserLutDec )
+        {
+            pCut->Delay = If_LutDecEval( p, pCut, pObj, Mode == 0, fFirst );
+            pCut->fUseless = pCut->Delay == ABC_INFINITY;
+        }
         else if ( p->pPars->fUserSesLib )
         {
             int Cost = 0;
@@ -507,7 +518,7 @@ void If_ObjPerformMappingChoice( If_Man_t * p, If_Obj_t * pObj, int Mode, int fP
     If_Set_t * pCutSet;
     If_Obj_t * pTemp;
     If_Cut_t * pCutTemp, * pCut;
-    int i, fSave0 = p->pPars->fDelayOpt || p->pPars->fDelayOptLut || p->pPars->fDsdBalance || p->pPars->fUserRecLib || p->pPars->fUserSesLib || p->pPars->fUse34Spec;
+    int i, fSave0 = p->pPars->fDelayOpt || p->pPars->fDelayOptLut || p->pPars->fDsdBalance || p->pPars->fUserRecLib || p->pPars->fUserSesLib || p->pPars->fUse34Spec || p->pPars->fUserLutDec;
     assert( pObj->pEquiv != NULL );
 
     // prepare
