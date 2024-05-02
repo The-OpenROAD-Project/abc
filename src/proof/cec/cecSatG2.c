@@ -219,6 +219,7 @@ void Cec4_ManSetParams( Cec_ParFra_t * pPars )
     pPars->nSatVarMax     =    1000;    // the max number of SAT variables before recycling SAT solver
     pPars->nCallsRecycle  =     500;    // calls to perform before recycling SAT solver
     pPars->nGenIters      =     100;    // pattern generation iterations
+    pPars->fBMiterInfo    =       0;    // printing BMiter information
 }
 
 /**Function*************************************************************
@@ -1781,8 +1782,52 @@ void Gia_ManRemoveWrongChoices( Gia_Man_t * p )
     }
     //Abc_Print( 1, "Removed %d wrong choices.\n", Counter );
 }
+
+void Cec4_ManSimulateDumpInfo( Cec4_Man_t * pMan )
+{
+    Gia_Obj_t * pObj; int i, k, nWords = pMan->pAig->nSimWords, nOuts[2] = {0};
+    Vec_Wrd_t * vSims = NULL, * vSimsPi = NULL;
+    FILE * pFile = fopen( pMan->pPars->pDumpName, "wb" );
+    if ( pFile == NULL ) {
+        printf( "Cannot open file \"%s\" for writing primary output information.\n", pMan->pPars->pDumpName );
+        return;
+    }
+    vSimsPi = Vec_WrdDup( pMan->pAig->vSimsPi );
+    memmove( Vec_WrdArray(vSimsPi), Vec_WrdArray(vSimsPi) + nWords, Gia_ManCiNum(pMan->pAig) * nWords );
+    Vec_WrdShrink( vSimsPi, Gia_ManCiNum(pMan->pAig) * nWords );
+    if ( Abc_TtIsConst0(Vec_WrdArray(vSimsPi), Gia_ManCiNum(pMan->pAig) * nWords) ) {
+        Vec_WrdFree( vSimsPi );
+        vSimsPi = Vec_WrdStartRandom( Gia_ManCiNum(pMan->pAig) * nWords );
+    }
+    vSims = Gia_ManSimPatSimOut( pMan->pAig, vSimsPi, 1 );
+    assert( nWords * Gia_ManCiNum(pMan->pAig) == Vec_WrdSize(vSimsPi) );
+    Gia_ManForEachCo( pMan->pAig, pObj, i )
+    {
+        void Extra_PrintHex2( FILE * pFile, unsigned * pTruth, int nVars );
+        word * pSims = Vec_WrdEntryP( vSims, nWords*i );
+        //Extra_PrintHex2( stdout, (unsigned *)pSims, 8 ); printf( "\n" );
+        fprintf( pFile, "%d ", i );
+        if ( Gia_ObjFaninLit0p(pMan->pNew, Gia_ManCo(pMan->pNew, i)) == 0 ) 
+            nOuts[0]++;
+        else if ( Abc_TtIsConst0(pSims, nWords) )
+            fprintf( pFile, "-" );
+        else {
+            int iPat = Abc_TtFindFirstBit2(pSims, nWords);
+            for ( k = 0; k < Gia_ManPiNum(pMan->pAig); k++ )
+                fprintf( pFile, "%d", Abc_TtGetBit(Vec_WrdEntryP(vSimsPi, nWords*k), iPat) );
+            nOuts[1]++;
+        }
+        fprintf( pFile, "\n" );
+    }
+    printf( "Information about %d sat, %d unsat, and %d undecided primary outputs was written into file \"%s\".\n", 
+        nOuts[1], nOuts[0], Gia_ManCoNum(pMan->pAig)-nOuts[1]-nOuts[0], pMan->pPars->pDumpName );
+    fclose( pFile );
+    Vec_WrdFree( vSims );
+    Vec_WrdFree( vSimsPi );
+}
 int Cec4_ManPerformSweeping( Gia_Man_t * p, Cec_ParFra_t * pPars, Gia_Man_t ** ppNew, int fSimOnly )
 {
+
     Cec4_Man_t * pMan = Cec4_ManCreate( p, pPars ); 
     Gia_Obj_t * pObj, * pRepr; 
     int i, fSimulate = 1;
@@ -1878,8 +1923,16 @@ int Cec4_ManPerformSweeping( Gia_Man_t * p, Cec_ParFra_t * pPars, Gia_Man_t ** p
             if ( pRepr == NULL )
                 continue;
         }
+        int id_obj = Gia_ObjId( p, pObj );
+        int id_repr = Gia_ObjId( p, pRepr );
+
         if ( Abc_Lit2Var(pObj->Value) == Abc_Lit2Var(pRepr->Value) )
         {
+            if ( pPars->fBMiterInfo ) 
+            {
+                Bnd_ManMerge( id_repr, id_obj, pObj->fPhase ^ pRepr->fPhase );
+            }
+
             assert( (pObj->Value ^ pRepr->Value) == (pObj->fPhase ^ pRepr->fPhase) );
             Gia_ObjSetProved( p, i );
             if ( Gia_ObjId(p, pRepr) == 0 )
@@ -1887,8 +1940,26 @@ int Cec4_ManPerformSweeping( Gia_Man_t * p, Cec_ParFra_t * pPars, Gia_Man_t ** p
             continue;
         }
         if ( Cec4_ManSweepNode(pMan, i, Gia_ObjId(p, pRepr)) && Gia_ObjProved(p, i) )
+        {
+            if (pPars->fBMiterInfo){
+
+                Bnd_ManMerge( id_repr, id_obj, pObj->fPhase ^ pRepr->fPhase );
+                // printf( "proven %d merged into %d (phase : %d)\n", Gia_ObjId(p, pObj), Gia_ObjId(p,pRepr), pObj->fPhase ^ pRepr -> fPhase );
+
+            }
             pObj->Value = Abc_LitNotCond( pRepr->Value, pObj->fPhase ^ pRepr->fPhase );
+
+
+        }
     }
+    
+    if ( pPars->fBMiterInfo )
+    {
+        // print
+        Bnd_ManFinalizeMappings();
+        // Bnd_ManPrintMappings();
+    }
+
     if ( p->iPatsPi > 0 )
     {
         abctime clk2 = Abc_Clock();
@@ -1925,6 +1996,8 @@ finalize:
         ABC_FREE( pBase );
         printf( "Dumped miter \"%s\" with %d pairs.\n", pFileName, pMan->vPairs ? Vec_IntSize(pMan->vPairs)/2 : -1 );
     }
+    if ( pPars->pDumpName )
+        Cec4_ManSimulateDumpInfo( pMan );
     Cec4_ManDestroy( pMan );
     //Gia_ManStaticFanoutStop( p );
     //Gia_ManEquivPrintClasses( p, 1, 0 );
@@ -1937,6 +2010,7 @@ Gia_Man_t * Cec4_ManSimulateTest( Gia_Man_t * p, Cec_ParFra_t * pPars )
 {
     Gia_Man_t * pNew = NULL;
     Cec4_ManPerformSweeping( p, pPars, &pNew, 0 );
+
     return pNew;
 }
 void Cec4_ManSimulateTest2( Gia_Man_t * p, int nConfs, int fVerbose )
