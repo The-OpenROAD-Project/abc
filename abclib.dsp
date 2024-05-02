@@ -3527,6 +3527,10 @@ SOURCE=.\src\map\if\ifDec16.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\src\map\if\ifDec66.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\src\map\if\ifDec75.c
 # End Source File
 # Begin Source File
@@ -3588,6 +3592,10 @@ SOURCE=.\src\map\if\ifTruth.c
 # Begin Source File
 
 SOURCE=.\src\map\if\ifTune.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\src\map\if\acd\ac_wrapper.cpp
 # End Source File
 # Begin Source File
 
@@ -4900,6 +4908,10 @@ SOURCE=.\src\aig\gia\giaBalMap.c
 # Begin Source File
 
 SOURCE=.\src\aig\gia\giaBidec.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\src\aig\gia\giaBound.c
 # End Source File
 # Begin Source File
 
