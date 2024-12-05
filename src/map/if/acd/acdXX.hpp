@@ -39,6 +39,11 @@
 #include "kitty_operators.hpp"
 #include "kitty_static_tt.hpp"
 
+#ifdef _MSC_VER
+#  include <intrin.h>
+#  define __builtin_popcount __popcnt
+#endif
+
 ABC_NAMESPACE_CXX_HEADER_START
 
 namespace acd
@@ -51,6 +56,9 @@ struct acdXX_params
 
   /* Maximum number of variables in the shared set */
   uint32_t max_shared_vars{ 4 };
+
+  /* Minimum number of variables in the shared set */
+  uint32_t min_shared_vars{ 0 };
 
   /* Run verification */
   bool verify{ false };
@@ -602,7 +610,7 @@ private:
                                             : cost <= 32  ? 4
                                                           : 5;
 
-      if ( ss_vars_needed + free_set_size < 6 )
+      if ( ss_vars_needed + free_set_size < ps.lut_size )
       {
         /* look for a shared variable */
         best_multiplicity = cost;
@@ -657,7 +665,7 @@ private:
                                             : cost <= 32  ? 4
                                                           : 5;
 
-      if ( ss_vars_needed + free_set_size < 6 )
+      if ( ss_vars_needed + free_set_size < ps.lut_size )
       {
         /* look for a shared variable */
         best_multiplicity = cost;
@@ -795,7 +803,7 @@ private:
     uint32_t max_shared_vars = std::min( ps.lut_size - best_free_set - 1, ps.max_shared_vars );
 
     /* search for a feasible shared set */
-    for ( uint32_t i = target_num_ss; i <= max_shared_vars; ++i )
+    for ( uint32_t i = std::max( target_num_ss, ps.min_shared_vars ); i <= max_shared_vars; ++i )
     {
       for ( uint32_t i = 0; i < 6; ++i )
       {
