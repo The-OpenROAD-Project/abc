@@ -436,7 +436,7 @@ int CmdCommandAbcrc( Abc_Frame_t * pAbc, int argc, char **argv )
 ******************************************************************************/
 int CmdCommandHistory( Abc_Frame_t * pAbc, int argc, char **argv )
 {
-    char * pName;
+    char * pName, * pStr = NULL;
     int i, c;
     int nPrints = 20;
     Extra_UtilGetoptReset();
@@ -453,11 +453,19 @@ int CmdCommandHistory( Abc_Frame_t * pAbc, int argc, char **argv )
     if ( argc > globalUtilOptind + 1 )
         goto usage;
     // get the number from the command line
-    if ( argc == globalUtilOptind + 1 )
-        nPrints = atoi(argv[globalUtilOptind]);
+    pStr = argc == globalUtilOptind+1 ? argv[globalUtilOptind] : NULL;
+    if ( pStr && pStr[0] >= '1' && pStr[0] <= '9' )
+        nPrints = atoi(pStr), pStr = NULL;
     // print the commands
-    Vec_PtrForEachEntryStart( char *, pAbc->aHistory, pName, i, Abc_MaxInt(0, Vec_PtrSize(pAbc->aHistory)-nPrints) )
-        fprintf( pAbc->Out, "%2d : %s\n", Vec_PtrSize(pAbc->aHistory)-i, pName );
+    if ( pStr == NULL ) {
+        Vec_PtrForEachEntryStart( char *, pAbc->aHistory, pName, i, Abc_MaxInt(0, Vec_PtrSize(pAbc->aHistory)-nPrints) )
+            fprintf( pAbc->Out, "%2d : %s\n", Vec_PtrSize(pAbc->aHistory)-i, pName );
+    }
+    else {
+        Vec_PtrForEachEntry( char *, pAbc->aHistory, pName, i )
+            if ( strstr(pName, pStr) )
+                fprintf( pAbc->Out, "%2d : %s\n", Vec_PtrSize(pAbc->aHistory)-i, pName );
+    }
     return 0;
 
 usage:
@@ -2404,7 +2412,11 @@ void Gia_ManGnuplotShow( char * pPlotFileName )
     {
         char Command[1000];
         sprintf( Command, "%s %s ", pProgNameGnuplot, pPlotFileName );
+#if defined(__wasm)
+        if ( 1 )
+#else
         if ( system( Command ) == -1 )
+#endif
         {
             fprintf( stdout, "Cannot execute \"%s\".\n", Command );
             return;
