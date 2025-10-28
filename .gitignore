@@ -63,3 +63,5 @@ tags
 /cmake
 /cscope
 abc.history
+
+bazel-*
