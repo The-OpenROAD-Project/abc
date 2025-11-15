@@ -1244,13 +1244,11 @@ cc_library(
         "-lpthread",
     ],
     linkstatic = True,
-    textual_hdrs = glob(
-        [
-            "src/base/abci/abciUnfold2.c",
-            "src/base/abci/abcDarUnfold2.c",
-            "src/aig/saig/saigUnfold2.c",
-        ],
-    ),
+    textual_hdrs = [
+        "src/base/abci/abciUnfold2.c",
+        "src/base/abci/abcDarUnfold2.c",
+        "src/aig/saig/saigUnfold2.c",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         "@org_gnu_readline//:readline",
