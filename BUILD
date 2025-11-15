@@ -15,6 +15,9 @@
 # ABC: System for Sequential Synthesis and Verification by Berkeley Logic
 # Synthesis and Verification Group.
 
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
 licenses(["notice"])
 
 exports_files(["LICENSE"])
@@ -38,8 +41,8 @@ cc_binary(
         "ABC_NAMESPACE=abc",
     ],
     includes = ["src/"],
-    deps = [":abc-lib"],
     visibility = ["//visibility:public"],
+    deps = [":abc-lib"],
 )
 
 cc_binary(
@@ -53,8 +56,8 @@ cc_binary(
         "ABC_NAMESPACE=abc",
     ],
     includes = ["src/"],
-    deps = [":abc-lib"],
     visibility = ["//visibility:public"],
+    deps = [":abc-lib"],
 )
 
 cc_library(
@@ -1236,7 +1239,10 @@ cc_library(
         "ABC_NAMESPACE=abc",
     ],
     includes = ["src/"],
-    linkopts = ["-ldl", "-lpthread"],
+    linkopts = [
+        "-ldl",
+        "-lpthread",
+    ],
     linkstatic = True,
     textual_hdrs = glob(
         [
@@ -1245,10 +1251,10 @@ cc_library(
             "src/aig/saig/saigUnfold2.c",
         ],
     ),
+    visibility = ["//visibility:public"],
     deps = [
         "@org_gnu_readline//:readline",
         "@net_zlib//:zlib",
         # FIXME: This needs bz2lib?
     ],
-    visibility = ["//visibility:public"],
 )

@@ -23,5 +23,7 @@ load("@rules_hdl//dependency_support/net_zlib:net_zlib.bzl", "net_zlib")
 load("@rules_hdl//dependency_support/org_gnu_readline:org_gnu_readline.bzl", "org_gnu_readline")
 
 net_invisible_island_ncurses()
+
 net_zlib()
+
 org_gnu_readline()
