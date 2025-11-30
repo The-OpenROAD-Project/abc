@@ -605,19 +605,23 @@ static inline int Exa_ManEval( Exa_Man_t * p )
 ***********************************************************************/
 void Exa_ManDumpBlif( Exa_Man_t * p, int fCompl )
 {
-    char Buffer[1000];
+    char * pStr = ABC_ALLOC( char, (1 << (p->nVars-2)) + 10 );
     char FileName[1100];
     FILE * pFile;
     int i, k, iVar;
     if ( fCompl )
         Abc_TtNot( p->pTruth, p->nWords );
-    Extra_PrintHexadecimalString( Buffer, (unsigned *)p->pTruth, p->nVars );
+    Extra_PrintHexadecimalString( pStr, (unsigned *)p->pTruth, p->nVars );    
+    if ( strlen(pStr) > 16 ) {
+        pStr[16] = '_';
+        pStr[17] = '\0';
+    }    
     if ( fCompl )
         Abc_TtNot( p->pTruth, p->nWords );
-    sprintf( FileName, "%s_%d_%d.blif", Buffer, 2, p->nNodes );
+    sprintf( FileName, "%s_%d_%d.blif", pStr, 2, p->nNodes );
     pFile = fopen( FileName, "wb" );
-    fprintf( pFile, "# Realization of the %d-input function %s using %d two-input gates:\n", p->nVars, Buffer, p->nNodes );
-    fprintf( pFile, ".model %s_%d_%d\n", Buffer, 2, p->nNodes );
+    fprintf( pFile, "# Realization of the %d-input function %s using %d two-input gates:\n", p->nVars, pStr, p->nNodes );
+    fprintf( pFile, ".model %s_%d_%d\n", pStr, 2, p->nNodes );
     fprintf( pFile, ".inputs" );
     for ( i = 0; i < p->nVars; i++ )
         fprintf( pFile, " %c", 'a'+i );
@@ -655,6 +659,7 @@ void Exa_ManDumpBlif( Exa_Man_t * p, int fCompl )
     fprintf( pFile, ".end\n\n" );
     fclose( pFile );
     printf( "Solution was dumped into file \"%s\".\n", FileName );
+    ABC_FREE( pStr );
 }
 void Exa_ManPrintSolution( Exa_Man_t * p, int fCompl )
 {
@@ -763,7 +768,28 @@ int Exa_ManSolverSolve( Exa_Man_t * p )
 }
 int Exa_ManAddCnfStart( Exa_Man_t * p, int fOnlyAnd )
 {
-    int pLits[MAJ_NOBJS], pLits2[3], i, j, k, n, m;
+    extern Vec_Int_t * Gia_ManKSatGenLevels( char * pGuide, int nIns, int nNodes );
+    Vec_Int_t * vRes = p->pPars->pGuide ? Gia_ManKSatGenLevels( p->pPars->pGuide, p->nVars, p->nNodes ) : NULL;
+    int pLits[MAJ_NOBJS], pLits2[3], i, j, k, n, m, Start, Stop;
+    if ( vRes ) {
+        n = p->nVars;
+        Vec_IntForEachEntryDoubleStart( vRes, Start, Stop, i, 2*p->nVars ) {
+            for ( j = 0; j < Start; j++ )
+                if ( p->VarMarks[n][0][j] ) {
+                    pLits[0] = Abc_Var2Lit( p->VarMarks[n][0][j], 1 );
+                    Exa_ManAddClause( p, pLits, 1 );
+                }
+            for ( k = 0; k < 2; k++ )
+            for ( j = Stop; j < n; j++ )
+                if ( p->VarMarks[n][k][j] ) {
+                    pLits[0] = Abc_Var2Lit( p->VarMarks[n][k][j], 1 );
+                    Exa_ManAddClause( p, pLits, 1 );
+                }
+            n++;
+        }
+        assert( n == p->nVars + p->nNodes );
+        Vec_IntFreeP( &vRes );
+    }
     // input constraints
     for ( i = p->nVars; i < p->nObjs; i++ )
     {
@@ -921,8 +947,8 @@ void Exa_ManExactSynthesis( Bmc_EsPar_t * pPars )
     int i, status, iMint = 1;
     abctime clkTotal = Abc_Clock();
     Exa_Man_t * p; int fCompl = 0;
-    word pTruth[16]; Abc_TtReadHex( pTruth, pPars->pTtStr );
-    assert( pPars->nVars <= 10 );
+    word pTruth[64]; Abc_TtReadHex( pTruth, pPars->pTtStr );
+    assert( pPars->nVars <= 12 );
     p = Exa_ManAlloc( pPars, pTruth );
     if ( pTruth[0] & 1 ) { fCompl = 1; Abc_TtNot( pTruth, p->nWords ); }
     status = Exa_ManAddCnfStart( p, pPars->fOnlyAnd );
@@ -988,6 +1014,7 @@ struct Exa3_Man_t_
     int               VarMarks[MAJ_NOBJS][6][MAJ_NOBJS]; // variable marks
     int               VarVals[MAJ_NOBJS]; // values of the first nVars variables
     Vec_Wec_t *       vOutLits;  // output vars
+    Vec_Wec_t *       vInVars;   // input vars
     bmcg_sat_solver * pSat;      // SAT solver
     int               nUsed[2];
 };
@@ -1018,6 +1045,74 @@ static inline int     Exa3_ManIsUsed3( Exa3_Man_t * p, int m, int n, int i, int 
     return 0;
 }
 
+
+/**Function*************************************************************
+
+  Synopsis    []
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+Vec_Wec_t * Exa3_ChooseInputVars_int( int nVars, int nLuts, int nLutSize )
+{
+    Vec_Wec_t * p = Vec_WecStart( nLuts ); 
+    Vec_Int_t * vLevel; int i;
+    Vec_WecForEachLevel( p, vLevel, i ) {
+        do { 
+            int iVar = rand() % nVars;
+            Vec_IntPushUniqueOrder( vLevel, iVar );
+        }
+        while ( Vec_IntSize(vLevel) < nLutSize-(int)(i>0) );
+    }
+    return p;
+}
+Vec_Int_t * Exa3_CountInputVars( int nVars, Vec_Wec_t * p )
+{
+    Vec_Int_t * vLevel; int i, k, Obj;
+    Vec_Int_t * vCounts = Vec_IntStart( nVars );
+    Vec_WecForEachLevel( p, vLevel, i )
+        Vec_IntForEachEntry( vLevel, Obj, k )
+            Vec_IntAddToEntry( vCounts, Obj, 1 );
+    return vCounts;
+}
+Vec_Wec_t * Exa3_ChooseInputVars( int nVars, int nLuts, int nLutSize, int Seed )
+{
+    if ( Seed ) 
+        srand(Seed); 
+    else {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        unsigned int seed = (unsigned int)(ts.tv_sec ^ ts.tv_nsec);
+        srand(seed);
+    }
+    for ( int i = 0; i < 1000; i++ ) {
+        Vec_Wec_t * p = Exa3_ChooseInputVars_int( nVars, nLuts, nLutSize );
+        Vec_Int_t * q = Exa3_CountInputVars( nVars, p );
+        int RetValue  = Vec_IntFind( q, 0 );
+        Vec_IntFree( q );
+        if ( RetValue == -1 )
+            return p;
+        Vec_WecFree( p );
+    }
+    assert( 0 );
+    return NULL;
+}
+Vec_Wec_t * Exa3_ChooseInputVars2( int nVars, int nLuts, int nLutSize, char * pPermStr )
+{
+    Vec_Wec_t * p = Vec_WecStart( nLuts );
+    Vec_Int_t * vLevel; int i, Pos = 0;
+    assert( nLuts * nLutSize == (int)strlen(pPermStr) );
+    Vec_WecForEachLevel( p, vLevel, i ) {
+        for ( int k = 0; k < nLutSize; k++, Pos++ )
+            if ( pPermStr[Pos] != '_' )
+                Vec_IntPush( vLevel, pPermStr[Pos] == '*' ? -1 : (int)(pPermStr[Pos]-'a') );
+    }
+    return p;
+}
 
 /**Function*************************************************************
 
@@ -1080,7 +1175,24 @@ static int Exa3_ManMarkup( Exa3_Man_t * p )
             }
         }
     }
-    printf( "The number of parameter variables = %d.\n", p->iVar );
+    if ( !p->pPars->fSilent ) printf( "The number of parameter variables = %d.\n", p->iVar );
+    if ( p->pPars->fLutCascade && (p->pPars->fLutInFixed || p->pPars->pPermStr) ) {
+        if ( p->pPars->pPermStr )
+            p->vInVars = Exa3_ChooseInputVars2( p->nVars, p->nNodes, p->nLutSize, p->pPars->pPermStr );
+        else
+            p->vInVars = Exa3_ChooseInputVars( p->nVars, p->nNodes, p->nLutSize, p->pPars->Seed );
+        if ( !p->pPars->fSilent ) {
+            Vec_Int_t * vLevel; int i, Var;
+            printf( "Using fixed input assignment %s%s:\n", 
+                p->pPars->pPermStr ? "provided by the user " : "generated randomly", p->pPars->pPermStr ? p->pPars->pPermStr : "" );
+            Vec_WecForEachLevelReverse( p->vInVars, vLevel, i ) {
+                printf( "%c : ", 'A'+p->nVars+i-p->nVars );
+                Vec_IntForEachEntry( vLevel, Var, k )
+                    printf( "%c ", Var < 0 ? '*' : 'a'+Var );
+                printf( "\n" );
+            }
+        }
+    }
     return p->iVar;
     // printout
     for ( i = p->nObjs - 1; i >= p->nVars; i-- )
@@ -1127,6 +1239,7 @@ static void Exa3_ManFree( Exa3_Man_t * p )
     Vec_BitFreeP( &p->vUsed2 );
     Vec_BitFreeP( &p->vUsed3 );
     Vec_WecFree( p->vOutLits );
+    Vec_WecFreeP( &p->vInVars );
     ABC_FREE( p );
 }
 
@@ -1202,7 +1315,7 @@ static void Exa3_ManPrintSolution( Exa3_Man_t * p, int fCompl )
     for ( i = p->nObjs - 1; i >= p->nVars; i-- )
     {
         int Val, iVarStart = 1 + p->LutMask*(i - p->nVars);
-        printf( "%02d = %d\'b", i, 1 << p->nLutSize );
+        printf( "%c = %d\'b", 'A'+i-p->nVars, 1 << p->nLutSize );
         for ( k = p->LutMask - 1; k >= 0; k-- )
         {
             Val = bmcg_sat_solver_read_cex_varvalue(p->pSat, iVarStart+k); 
@@ -1222,12 +1335,26 @@ static void Exa3_ManPrintSolution( Exa3_Man_t * p, int fCompl )
             if ( iVar >= 0 && iVar < p->nVars )
                 printf( " %c", 'a'+iVar );
             else
-                printf( " %02d", iVar );
+                printf( " %c", 'A'+iVar-p->nVars );
         }
         printf( " )\n" );
     }
 }
-
+static void Exa3_ManPrintPerm( Exa3_Man_t * p )
+{
+    int i, k, iVar;
+    for ( i = p->nVars; i < p->nObjs; i++ )
+    {
+        if ( i > p->nVars )
+            printf( "_" );
+        for ( k = p->nLutSize - 1; k >= 0; k-- )
+        {
+            iVar = Exa3_ManFindFanin( p, i, k );
+            if ( iVar >= 0 && iVar < p->nVars )
+                printf( "%c", 'a'+iVar );
+        }
+    }
+}
 /**Function*************************************************************
 
   Synopsis    []
@@ -1243,11 +1370,16 @@ static void Exa3_ManDumpBlif( Exa3_Man_t * p, int fCompl )
 {
     int i, k, b, iVar;
     char pFileName[1000];
-    sprintf( pFileName, "%s.blif", p->pPars->pTtStr );
+    char * pStr = Abc_UtilStrsav(p->pPars->pSymStr ? p->pPars->pSymStr : p->pPars->pTtStr);
+    if ( strlen(pStr) > 16 ) {
+        pStr[16] = '_';
+        pStr[17] = '\0';
+    }    
+    sprintf( pFileName, "%s.blif", pStr );
     FILE * pFile = fopen( pFileName, "wb" );
     if ( pFile == NULL ) return;
     fprintf( pFile, "# Realization of given %d-input function using %d %d-input LUTs synthesized by ABC on %s\n", p->nVars, p->nNodes, p->nLutSize, Extra_TimeStamp() );
-    fprintf( pFile, ".model %s\n", p->pPars->pTtStr );
+    fprintf( pFile, ".model %s\n", pStr );
     fprintf( pFile, ".inputs" );
     for ( k = 0; k < p->nVars; k++ )
         fprintf( pFile, " %c", 'a'+k );
@@ -1280,7 +1412,8 @@ static void Exa3_ManDumpBlif( Exa3_Man_t * p, int fCompl )
     }
     fprintf( pFile, ".end\n\n" );
     fclose( pFile );
-    printf( "Finished dumping the resulting LUT network into file \"%s\".\n", pFileName );
+    if ( !p->pPars->fSilent ) printf( "Finished dumping the resulting LUT network into file \"%s\".\n", pFileName );
+    ABC_FREE( pStr );
 }
 
 
@@ -1374,6 +1507,24 @@ static int Exa3_ManAddCnfStart( Exa3_Man_t * p, int fOnlyAnd )
         assert( Vec_IntSize(vArray) > 0 );
         if ( !bmcg_sat_solver_addclause( p->pSat, Vec_IntArray(vArray), Vec_IntSize(vArray) ) )
             return 0;
+    }
+    if ( p->vInVars ) {
+        Vec_Int_t * vLevel; int Var;
+        //Vec_WecPrint( p->vInVars, 0 );
+        Vec_WecForEachLevel( p->vInVars, vLevel, i )
+        {
+            assert( Vec_IntSize(vLevel) > 0 );
+            Vec_IntForEachEntry( vLevel, Var, k ) {
+                if ( Var < 0 ) continue;
+                if ( p->VarMarks[p->nVars+i][p->nLutSize-1-k][Var] == 0 ) {
+                    printf( "Skipping variable %d in place %d because it cannot be constrained.\n", Var, k );
+                    continue;
+                }
+                pLits[0] = Abc_Var2Lit( p->VarMarks[p->nVars+i][p->nLutSize-1-k][Var], 0 ); assert(pLits[0]);
+                if ( !bmcg_sat_solver_addclause( p->pSat, pLits, 1 ) )
+                    return 0;
+            }
+        }
     }
     return 1;
 }
@@ -1504,24 +1655,24 @@ int Exa3_ManExactSynthesis( Bmc_EsPar_t * pPars )
     int i, status, Res = 0, iMint = 1;
     abctime clkTotal = Abc_Clock();
     Exa3_Man_t * p; int fCompl = 0;
-    word pTruth[16]; 
+    word pTruth[64]; 
     if ( pPars->pSymStr ) {
         word * pFun = Abc_TtSymFunGenerate( pPars->pSymStr, pPars->nVars );
         pPars->pTtStr = ABC_CALLOC( char, pPars->nVars > 2 ? (1 << (pPars->nVars-2)) + 1 : 2 );
         Extra_PrintHexadecimalString( pPars->pTtStr, (unsigned *)pFun, pPars->nVars );
-        printf( "Generated symmetric function: %s\n", pPars->pTtStr );
+        if ( !pPars->fSilent ) printf( "Generated symmetric function: %s\n", pPars->pTtStr );
         ABC_FREE( pFun );
     }
     if ( pPars->pTtStr )
         Abc_TtReadHex( pTruth, pPars->pTtStr );
     else assert( 0 );
-    assert( pPars->nVars <= 10 );
+    assert( pPars->nVars <= 12 );
     assert( pPars->nLutSize <= 6 );
     p = Exa3_ManAlloc( pPars, pTruth );
     if ( pTruth[0] & 1 ) { fCompl = 1; Abc_TtNot( pTruth, p->nWords ); }
     status = Exa3_ManAddCnfStart( p, pPars->fOnlyAnd );
     assert( status );
-    printf( "Running exact synthesis for %d-input function with %d %d-input LUTs...\n", p->nVars, p->nNodes, p->nLutSize );
+    if ( !pPars->fSilent ) printf( "Running exact synthesis for %d-input function with %d %d-input LUTs...\n", p->nVars, p->nNodes, p->nLutSize );
     if ( pPars->fUseIncr ) 
     {
         bmcg_sat_solver_set_nvars( p->pSat, p->iVar + p->nNodes*(1 << p->nVars) );
@@ -1541,53 +1692,97 @@ int Exa3_ManExactSynthesis( Bmc_EsPar_t * pPars )
     }
     if ( pPars->fVerbose && status != GLUCOSE_UNDEC )
         Exa3_ManPrint( p, i, iMint, Abc_Clock() - clkTotal );
-    if ( iMint == -1 )
+    if ( iMint == -1 ) {
         Exa3_ManPrintSolution( p, fCompl ), Res = 1;
+        printf( "The variable permutation is \"" );
+        Exa3_ManPrintPerm(p);
+        printf( "\".\n" );
+    }
     else if ( status == GLUCOSE_UNDEC )
         printf( "The solver timed out after %d sec.\n", pPars->RuntimeLim );
-    else 
-        printf( "The problem has no solution.\n" );
-    printf( "Added = %d.  Tried = %d.  ", p->nUsed[1], p->nUsed[0] );
-    Abc_PrintTime( 1, "Total runtime", Abc_Clock() - clkTotal );
-    if ( iMint == -1 )
+    else if ( !p->pPars->fSilent ) 
+        printf( "The problem has no solution.\n" ), Res = 2;
+    if ( !pPars->fSilent && (p->nUsed[0] || p->nUsed[1]) ) printf( "Added = %d.  Tried = %d.  ", p->nUsed[1], p->nUsed[0] );
+    if ( !pPars->fSilent ) Abc_PrintTime( 1, "Total runtime", Abc_Clock() - clkTotal );
+    if ( iMint == -1 && pPars->fDumpBlif )
         Exa3_ManDumpBlif( p, fCompl );
     if ( pPars->pSymStr ) 
         ABC_FREE( pPars->pTtStr );
     Exa3_ManFree( p );
     return Res;
 }
+
+char * Exa_TimeStamp()
+{
+    static char Buffer[100];
+    time_t ltime;
+    struct tm *tm_info;
+
+    // Get the current time
+    time(&ltime);
+    tm_info = localtime(&ltime);
+
+    // Format the time as YYYY_MM_DD__HH_MM_SS
+    strftime(Buffer, sizeof(Buffer), "%Y_%m_%d__%H_%M_%S", tm_info);
+    
+    return Buffer;
+}
+
 void Exa3_ManExactSynthesisRand( Bmc_EsPar_t * pPars )
 {
-    int i, k, nDecs = 0, nWords = Abc_TtWordNum(pPars->nVars);
-    word * pFun = ABC_ALLOC( word, nWords );
-    Abc_Random(1);
-    printf( "\n" );
+    abctime clk = Abc_Clock();
+    int i, k, Status, nDecs[3] = {0}, nWords = Abc_TtWordNum(pPars->nVars);
+    word * pFun = ABC_ALLOC( word, nWords ); 
+    unsigned Rand0 = Abc_Random(1);
+    Vec_Str_t * vUndec = Vec_StrAlloc( 100 );
+    for ( i = 0; i < pPars->Seed; i++ )
+        Rand0 = Abc_Random(0);    
     for ( i = 0; i < pPars->nRandFuncs; i++ ) {
         if ( pPars->nMintNum == 0 )
             for ( k = 0; k < nWords; k++ )
-                pFun[k] = Abc_RandomW(0);
+                pFun[k] = Rand0 ^ Abc_RandomW(0);
         else {
             Abc_TtClear( pFun, nWords );
             for ( k = 0; k < pPars->nMintNum; k++ ) {
                 int iMint = 0;
-                do iMint = Abc_Random(0) % (1 << pPars->nVars);
+                do iMint = (Rand0 ^ Abc_Random(0)) % (1 << pPars->nVars);
                 while ( Abc_TtGetBit(pFun, iMint) );
                 Abc_TtSetBit( pFun, iMint );
             }
         }
         pPars->pTtStr = ABC_CALLOC( char, pPars->nVars > 2 ? (1 << (pPars->nVars-2)) + 1 : 2 );
         Extra_PrintHexadecimalString( pPars->pTtStr, (unsigned *)pFun, pPars->nVars );
-        printf( "\nIteration %d : ", i );
+        printf( "\nFunction %4d : ", i );
         if ( pPars->nMintNum )
             printf( "Random function has %d positive minterms.", pPars->nMintNum );
         printf( "\n" );
         if ( pPars->fVerbose )
             printf( "Truth table : %s\n", pPars->pTtStr );
-        nDecs += Exa3_ManExactSynthesis( pPars );
+        Status = Exa3_ManExactSynthesis( pPars );
+        nDecs[Status]++;
+        if ( Status == 0 ) // undecided
+            Vec_StrPrintF( vUndec, "%s\n", pPars->pTtStr );
         ABC_FREE( pPars->pTtStr );
     }
-    printf( "Decomposable are %d (out of %d) functions (%.2f %%).\n", nDecs, pPars->nRandFuncs, 100.0*nDecs/pPars->nRandFuncs );
+    printf( "\n" );
+    printf( "Decomposable     are %6d (out of %6d) functions (%6.2f %%).\n", nDecs[1], pPars->nRandFuncs, 100.0*nDecs[1]/pPars->nRandFuncs );
+    printf( "Non-decomposable are %6d (out of %6d) functions (%6.2f %%).\n", nDecs[2], pPars->nRandFuncs, 100.0*nDecs[2]/pPars->nRandFuncs );
+    printf( "Undecided        are %6d (out of %6d) functions (%6.2f %%).\n", nDecs[0], pPars->nRandFuncs, 100.0*nDecs[0]/pPars->nRandFuncs );
     ABC_FREE( pFun );
+    if ( nDecs[0] > 0 ) {
+        char filename[1000];
+        sprintf( filename, "undecided_%d_out_of_F%d_with_N%d_M%d_K%d_U%d_S%d_T%d%s__%s.txt", 
+                nDecs[0], pPars->nRandFuncs, pPars->nVars, pPars->nNodes, pPars->nLutSize, 
+                pPars->nMintNum, pPars->Seed, pPars->RuntimeLim, pPars->fLutCascade ? "_r" : "", Exa_TimeStamp() );
+        FILE * pFile = fopen( filename, "wb" );
+        if ( pFile ) {
+            fwrite( Vec_StrArray(vUndec), 1, Vec_StrSize(vUndec), pFile );
+            fclose( pFile );
+            printf( "The resulting undecided functions were written into file \"%s\".\n", filename );
+        }
+    }
+    Abc_PrintTime( 1, "Total time", Abc_Clock() - clk );    
+    Vec_StrFree( vUndec );
 }
 
 
@@ -1941,9 +2136,26 @@ static inline int Exa4_ManAddClause4( Exa4_Man_t * p, int Lit0, int Lit1, int Li
     int pLits[4] = { Lit0, Lit1, Lit2, Lit3 };
     return Exa4_ManAddClause( p, pLits, 4 );
 }
-int Exa4_ManGenStart( Exa4_Man_t * p, int fOnlyAnd, int fFancy, int fOrderNodes, int fUniqFans )
+int Exa4_ManGenStart( Exa4_Man_t * p, int fOnlyAnd, int fFancy, int fOrderNodes, int fUniqFans, int fCard, char * pGuide )
 {
-    int pLits[2*MAJ_NOBJS], i, j, k, n, m, nLits;
+    extern Vec_Int_t * Gia_ManKSatGenLevels( char * pGuide, int nIns, int nNodes );
+    Vec_Int_t * vRes = pGuide ? Gia_ManKSatGenLevels( pGuide, p->nDivs, p->nNodes ) : NULL;
+    int pLits[2*MAJ_NOBJS], i, j, k, n, m, nLits, Start, Stop;
+    if ( vRes ) {
+        n = p->nDivs;
+        Vec_IntForEachEntryDoubleStart( vRes, Start, Stop, i, 2*p->nDivs ) {
+            for ( j = 0; j < Start; j++ )
+                if ( p->VarMarks[n][0][j] )
+                    Exa4_ManAddClause4( p, Abc_Var2Lit( p->VarMarks[n][0][j], 1 ), 0, 0, 0 );
+            for ( k = 0; k < 2; k++ )
+            for ( j = Stop; j < n; j++ )
+                if ( p->VarMarks[n][k][j] )
+                    Exa4_ManAddClause4( p, Abc_Var2Lit( p->VarMarks[n][k][j], 1 ), 0, 0, 0 );
+            n++;
+        }
+        assert( n == p->nDivs + p->nNodes );
+        Vec_IntFreeP( &vRes );
+    }
     for ( i = p->nDivs; i < p->nDivs + p->nNodes; i++ )
     {
         int iVarStart = 1 + 5*(i - p->nDivs);//
@@ -1955,9 +2167,17 @@ int Exa4_ManGenStart( Exa4_Man_t * p, int fOnlyAnd, int fFancy, int fOrderNodes,
                     pLits[nLits++] = Abc_Var2Lit( p->VarMarks[i][k][j], 0 );
             assert( nLits > 0 );
             Exa4_ManAddClause( p, pLits, nLits );
-            for ( n = 0;   n < nLits; n++ )
-            for ( m = n+1; m < nLits; m++ )
-                Exa4_ManAddClause4( p, Abc_LitNot(pLits[n]), Abc_LitNot(pLits[m]), 0, 0 );
+            if ( !fCard ) {
+                for ( n = 0;   n < nLits; n++ )
+                for ( m = n+1; m < nLits; m++ )
+                    Exa4_ManAddClause4( p, Abc_LitNot(pLits[n]), Abc_LitNot(pLits[m]), 0, 0 );
+            }
+            else {
+                fprintf( p->pFile, "k %d ", nLits-1 );
+                for ( n = 0; n < nLits; n++ )
+                    pLits[n] = Abc_LitNot(pLits[n]);
+                Exa4_ManAddClause( p, pLits, nLits );
+            }
             if ( k == 1 )
                 break;
             for ( j = 0; j < p->nObjs; j++ ) if ( p->VarMarks[i][0][j] )
@@ -2096,17 +2316,17 @@ void Exa4_ManGenMint( Exa4_Man_t * p, int iMint, int fOnlyAnd, int fFancy )
             Exa4_ManAddClause4( p, Abc_Var2Lit(p->VarMarks[i][0][j], 1), Abc_LitNotCond(VarVals[j], n), Abc_LitNotCond(VarVals[i], !n), 0);
     }
 }
-void Exa4_ManGenCnf( Exa4_Man_t * p, char * pFileName, int fOnlyAnd, int fFancy, int fOrderNodes, int fUniqFans )
+void Exa4_ManGenCnf( Exa4_Man_t * p, char * pFileName, int fOnlyAnd, int fFancy, int fOrderNodes, int fUniqFans, int fCard, char * pGuide )
 {
     int m;
     assert( p->pFile == NULL );
     p->pFile = fopen( pFileName, "wb" );
     fputs( "p cnf                \n", p->pFile );
-    Exa4_ManGenStart( p, fOnlyAnd, fFancy, fOrderNodes, fUniqFans );
+    Exa4_ManGenStart( p, fOnlyAnd, fFancy, fOrderNodes, fUniqFans, fCard, pGuide );
     for ( m = 1; m < Vec_WrdSize(p->vSimsIn); m++ )
         Exa4_ManGenMint( p, m, fOnlyAnd, fFancy );
     rewind( p->pFile );
-    fprintf( p->pFile, "p cnf %d %d", p->nCnfVars, p->nCnfClauses );
+    fprintf( p->pFile, "p %cnf %d %d", fCard ? 'k' : 'c', p->nCnfVars, p->nCnfClauses );
     fclose( p->pFile );
 }
 
@@ -2130,6 +2350,8 @@ static inline int Exa4_ManFindFanin( Exa4_Man_t * p, Vec_Int_t * vValues, int i,
             iVar = j;
             Count++;
         }
+    if ( Count != 1 )
+        printf( "Fanin count is %d instead of %d.\n", Count, 1 );
     assert( Count == 1 );
     return iVar;
 }
@@ -2268,27 +2490,34 @@ Mini_Aig_t * Exa4_ManMiniAig( Exa4_Man_t * p, Vec_Int_t * vValues, int fFancy )
   SeeAlso     []
 
 ***********************************************************************/
-Mini_Aig_t * Exa4_ManGenTest( Vec_Wrd_t * vSimsIn, Vec_Wrd_t * vSimsOut, int nIns, int nDivs, int nOuts, int nNodes, int TimeOut, int fOnlyAnd, int fFancy, int fOrderNodes, int fUniqFans, int fVerbose )
+Mini_Aig_t * Exa4_ManGenTest( Vec_Wrd_t * vSimsIn, Vec_Wrd_t * vSimsOut, int nIns, int nDivs, int nOuts, int nNodes, int TimeOut, int fOnlyAnd, int fFancy, int fOrderNodes, int fUniqFans, int fVerbose, int fCard, char * pGuide )
 {
+    extern Vec_Int_t * Gia_RunKadical( char * pFileNameIn, char * pFileNameOut, int Seed, int nBTLimit, int TimeOut, int fVerbose, int * pStatus );
     Mini_Aig_t * pMini = NULL;
     abctime clkTotal = Abc_Clock();
     Vec_Int_t * vValues = NULL;
-    char * pFileNameIn  = "_temp_.cnf";
-    char * pFileNameOut = "_temp_out.cnf";
+    srand(time(NULL));
+    int Status = 0, Rand = ((((unsigned)rand()) << 12) ^ ((unsigned)rand())) & 0xFFFFF;
+    char pFileNameIn[32];  sprintf( pFileNameIn,  "_%05x_.cnf", Rand ); 
+    char pFileNameOut[32]; sprintf( pFileNameOut, "_%05x_.out", Rand ); 
     Exa4_Man_t * p = Exa4_ManAlloc( vSimsIn, vSimsOut, nIns, nDivs, nOuts, nNodes, fVerbose );
     Exa_ManIsNormalized( vSimsIn, vSimsOut );
-    Exa4_ManGenCnf( p, pFileNameIn, fOnlyAnd, fFancy, fOrderNodes, fUniqFans );
+    Exa4_ManGenCnf( p, pFileNameIn, fOnlyAnd, fFancy, fOrderNodes, fUniqFans, fCard, pGuide );
     if ( fVerbose )
         printf( "Timeout = %d. OnlyAnd = %d. Fancy = %d. OrderNodes = %d. UniqueFans = %d. Verbose = %d.\n", TimeOut, fOnlyAnd, fFancy, fOrderNodes, fUniqFans, fVerbose );
     if ( fVerbose )
         printf( "CNF with %d variables and %d clauses was dumped into file \"%s\".\n", p->nCnfVars, p->nCnfClauses, pFileNameIn );
-    vValues = Exa4_ManSolve( pFileNameIn, pFileNameOut, TimeOut, fVerbose );
+    if ( fCard )
+        vValues = Gia_RunKadical( pFileNameIn, pFileNameOut, 0, 0, TimeOut, fVerbose, &Status );
+    else
+        vValues = Exa4_ManSolve( pFileNameIn, pFileNameOut, TimeOut, fVerbose );
     if ( vValues ) pMini = Exa4_ManMiniAig( p, vValues, fFancy );
     //if ( vValues ) Exa4_ManPrintSolution( p, vValues, fFancy );
     if ( vValues ) Exa_ManMiniPrint( pMini, p->nIns );
     if ( vValues ) Exa_ManMiniVerify( pMini, vSimsIn, vSimsOut );
     Vec_IntFreeP( &vValues );
     Exa4_ManFree( p );
+    unlink( pFileNameIn );    
     Abc_PrintTime( 1, "Total runtime", Abc_Clock() - clkTotal );
     return pMini;
 }
@@ -2310,7 +2539,7 @@ void Exa_ManExactSynthesis4_( Bmc_EsPar_t * pPars )
             if ( (m >> i) & 1 )
                 Abc_TtSetBit( Vec_WrdEntryP(vSimsIn, m), 1+i );
     }
-    pMini = Exa4_ManGenTest( vSimsIn, vSimsOut, 3, 4, 2, pPars->nNodes, pPars->RuntimeLim, pPars->fOnlyAnd, pPars->fFewerVars, pPars->fOrderNodes, pPars->fUniqFans, pPars->fVerbose );
+    pMini = Exa4_ManGenTest( vSimsIn, vSimsOut, 3, 4, 2, pPars->nNodes, pPars->RuntimeLim, pPars->fOnlyAnd, pPars->fFewerVars, pPars->fOrderNodes, pPars->fUniqFans, pPars->fVerbose, 0, pPars->pGuide );
     if ( pMini ) Mini_AigStop( pMini );
     Vec_WrdFree( vSimsIn );
     Vec_WrdFree( vSimsOut );
@@ -2321,9 +2550,9 @@ void Exa_ManExactSynthesis4( Bmc_EsPar_t * pPars )
     int i, m, nMints = 1 << pPars->nVars, fCompl = 0;
     Vec_Wrd_t * vSimsIn  = Vec_WrdStart( nMints );
     Vec_Wrd_t * vSimsOut = Vec_WrdStart( nMints );
-    word pTruth[16]; Abc_TtReadHex( pTruth, pPars->pTtStr );
+    word pTruth[64]; Abc_TtReadHex( pTruth, pPars->pTtStr );
     if ( pTruth[0] & 1 ) { fCompl = 1; Abc_TtNot( pTruth, Abc_TtWordNum(pPars->nVars) ); }
-    assert( pPars->nVars <= 10 );
+    assert( pPars->nVars <= 12 );
     for ( m = 0; m < nMints; m++ )
     {
         Abc_TtSetBit( Vec_WrdEntryP(vSimsOut, m), Abc_TtGetBit(pTruth, m) );
@@ -2332,7 +2561,7 @@ void Exa_ManExactSynthesis4( Bmc_EsPar_t * pPars )
                 Abc_TtSetBit( Vec_WrdEntryP(vSimsIn, m), 1+i );
     }
     assert( Vec_WrdSize(vSimsIn) == (1 << pPars->nVars) );
-    pMini = Exa4_ManGenTest( vSimsIn, vSimsOut, pPars->nVars, 1+pPars->nVars, 1, pPars->nNodes, pPars->RuntimeLim, pPars->fOnlyAnd, pPars->fFewerVars, pPars->fOrderNodes, pPars->fUniqFans, pPars->fVerbose );
+    pMini = Exa4_ManGenTest( vSimsIn, vSimsOut, pPars->nVars, 1+pPars->nVars, 1, pPars->nNodes, pPars->RuntimeLim, pPars->fOnlyAnd, pPars->fFewerVars, pPars->fOrderNodes, pPars->fUniqFans, pPars->fVerbose, pPars->fCard, pPars->pGuide );
     if ( pMini ) Mini_AigStop( pMini );
     if ( fCompl ) printf( "The resulting circuit, if computed, will be complemented.\n" );
     Vec_WrdFree( vSimsIn );
@@ -2797,8 +3026,10 @@ Mini_Aig_t * Exa5_ManGenTest( Vec_Wrd_t * vSimsIn, Vec_Wrd_t * vSimsOut, int nIn
     abctime clkTotal = Abc_Clock();
     Mini_Aig_t * pMini  = NULL;
     Vec_Int_t * vValues = NULL;
-    char * pFileNameIn  = "_temp_.cnf";
-    char * pFileNameOut = "_temp_out.cnf";
+    srand(time(NULL));
+    int Rand = ((((unsigned)rand()) << 12) ^ ((unsigned)rand())) & 0xFFFFF;
+    char pFileNameIn[32];  sprintf( pFileNameIn,  "_%05x_.cnf", Rand ); 
+    char pFileNameOut[32]; sprintf( pFileNameOut, "_%05x_.out", Rand );
     Exa5_Man_t * p = Exa5_ManAlloc( vSimsIn, vSimsOut, nIns, nDivs, nOuts, nNodes, fVerbose );
     Exa_ManIsNormalized( vSimsIn, vSimsOut );
     Exa5_ManGenCnf( p, pFileNameIn, fOnlyAnd, fFancy, fOrderNodes, fUniqFans );
@@ -2813,6 +3044,7 @@ Mini_Aig_t * Exa5_ManGenTest( Vec_Wrd_t * vSimsIn, Vec_Wrd_t * vSimsOut, int nIn
     if ( vValues ) Exa_ManMiniVerify( pMini, vSimsIn, vSimsOut );
     Vec_IntFreeP( &vValues );
     Exa5_ManFree( p );
+    unlink( pFileNameIn );    
     Abc_PrintTime( 1, "Total runtime", Abc_Clock() - clkTotal );
     return pMini;
 }
@@ -2822,9 +3054,9 @@ void Exa_ManExactSynthesis5( Bmc_EsPar_t * pPars )
     int i, m, nMints = 1 << pPars->nVars, fCompl = 0;
     Vec_Wrd_t * vSimsIn  = Vec_WrdStart( nMints );
     Vec_Wrd_t * vSimsOut = Vec_WrdStart( nMints );
-    word pTruth[16]; Abc_TtReadHex( pTruth, pPars->pTtStr );
+    word pTruth[64]; Abc_TtReadHex( pTruth, pPars->pTtStr );
     if ( pTruth[0] & 1 ) { fCompl = 1; Abc_TtNot( pTruth, Abc_TtWordNum(pPars->nVars) ); }
-    assert( pPars->nVars <= 10 );
+    assert( pPars->nVars <= 12 );
     for ( m = 0; m < nMints; m++ )
     {
         Abc_TtSetBit( Vec_WrdEntryP(vSimsOut, m), Abc_TtGetBit(pTruth, m) );
@@ -2929,7 +3161,7 @@ word Exa_ManExactSynthesis4VarsOne( int Index, int Truth, int nNodes )
     int i, m, nMints = 16, fCompl = 0;
     Vec_Wrd_t * vSimsIn  = Vec_WrdStart( nMints );
     Vec_Wrd_t * vSimsOut = Vec_WrdStart( nMints );
-    word pTruth[16] = { Abc_Tt6Stretch((word)Truth, 4) };
+    word pTruth[64] = { Abc_Tt6Stretch((word)Truth, 4) };
     if ( pTruth[0] & 1 ) { fCompl = 1; Abc_TtNot( pTruth, 1 ); }
     for ( m = 0; m < nMints; m++ )
     {
@@ -3717,8 +3949,9 @@ Mini_Aig_t * Exa6_ManGenTest( Vec_Wrd_t * vSimsIn, Vec_Wrd_t * vSimsOut, int nIn
     Mini_Aig_t * pMini = NULL;
     abctime clkTotal = Abc_Clock();
     Vec_Int_t * vValues = NULL;
-    char * pFileNameIn  = "_temp_.cnf";
-    char * pFileNameOut = "_temp_out.cnf";
+    int Rand = ((((unsigned)rand()) << 12) ^ ((unsigned)rand())) & 0xFFFFF;
+    char pFileNameIn[32];  sprintf( pFileNameIn,  "_%05x_.cnf", Rand ); 
+    char pFileNameOut[32]; sprintf( pFileNameOut, "_%05x_.out", Rand );
     Exa6_Man_t * p = Exa6_ManAlloc( vSimsIn, vSimsOut, nIns, 1+nIns+nDivs, nOuts, nNodes, fVerbose );
     Exa_ManIsNormalized( vSimsIn, vSimsOut );
     Exa6_ManGenCnf( p, pFileNameIn, fOnlyAnd, fFancy, fOrderNodes, fUniqFans );
@@ -3733,6 +3966,7 @@ Mini_Aig_t * Exa6_ManGenTest( Vec_Wrd_t * vSimsIn, Vec_Wrd_t * vSimsOut, int nIn
     if ( vValues && nIns <= 6 ) Exa_ManMiniVerify( pMini, vSimsIn, vSimsOut );
     Vec_IntFreeP( &vValues );
     Exa6_ManFree( p );
+    unlink( pFileNameIn );
     Abc_PrintTime( 1, "Total runtime", Abc_Clock() - clkTotal );
     return pMini;
 }
@@ -4014,10 +4248,11 @@ void Exa_ManExactSynthesis7( Bmc_EsPar_t * pPars, int GateSize )
     abctime clkTotal = Abc_Clock();
     int v, n, nMints = 1 << pPars->nVars;
     int nV = pPars->nVars + pPars->nNodes;
-    word pTruth[16]; Abc_TtReadHex( pTruth, pPars->pTtStr );
+    word pTruth[64]; Abc_TtReadHex( pTruth, pPars->pTtStr );
     Vec_Int_t * vValues = NULL;
-    char * pFileNameIn  = "_temp_.cnf";
-    char * pFileNameOut = "_temp_out.cnf";
+    int Rand = ((((unsigned)rand()) << 12) ^ ((unsigned)rand())) & 0xFFFFF;
+    char pFileNameIn[32];  sprintf( pFileNameIn,  "_%05x_.cnf", Rand ); 
+    char pFileNameOut[32]; sprintf( pFileNameOut, "_%05x_.out", Rand );
     int nClas = Exa7_ManGenCnf( pFileNameIn, pTruth, pPars->nVars, pPars->nNodes, GateSize );
     if ( pPars->fVerbose )
         printf( "CNF with %d variables and %d clauses was dumped into file \"%s\".\n", nMints * nV * nV, nClas, pFileNameIn );
@@ -4036,6 +4271,7 @@ void Exa_ManExactSynthesis7( Bmc_EsPar_t * pPars, int GateSize )
     if ( vValues )
         Exa_ManDumpVerilog( vValues, pPars->nVars, pPars->nNodes, GateSize, pTruth );
     Vec_IntFreeP( &vValues );
+    unlink( pFileNameIn );    
     Abc_PrintTime( 1, "Total runtime", Abc_Clock() - clkTotal );
 }
 

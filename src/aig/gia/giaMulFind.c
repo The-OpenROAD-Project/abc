@@ -661,15 +661,15 @@ Vec_Wec_t * Gia_ManMulFindBInputs( Gia_Man_t * p, Vec_Wec_t * vCuts4, Vec_Wec_t 
   SeeAlso     []
 
 ***********************************************************************/
-Vec_Int_t * Gia_ManMulFindTfo( Gia_Man_t * p, Vec_Int_t * vIn0, Vec_Int_t * vIn1 )
+Vec_Int_t * Gia_ManMulFindTfo( Gia_Man_t * p, Vec_Int_t * vIn0, Vec_Int_t * vIn1, int fLits )
 {
     Vec_Int_t * vTfo = Vec_IntAlloc( 100 );
     Gia_Obj_t * pObj; int i, Obj;
     Gia_ManIncrementTravId( p );
     Vec_IntForEachEntry( vIn0, Obj, i )
-        Gia_ObjSetTravIdCurrentId( p, Obj );
+        Gia_ObjSetTravIdCurrentId( p, fLits ? Abc_Lit2Var(Obj) : Obj );
     Vec_IntForEachEntry( vIn1, Obj, i )
-        Gia_ObjSetTravIdCurrentId( p, Obj );
+        Gia_ObjSetTravIdCurrentId( p, fLits ? Abc_Lit2Var(Obj) : Obj );
     Gia_ManForEachAnd( p, pObj, i ) {
         if ( Gia_ObjIsTravIdCurrentId(p, i) )
             continue;
@@ -678,15 +678,15 @@ Vec_Int_t * Gia_ManMulFindTfo( Gia_Man_t * p, Vec_Int_t * vIn0, Vec_Int_t * vIn1
     }
     return vTfo;
 }
-Vec_Wrd_t * Gia_ManMulFindSimCone( Gia_Man_t * p, Vec_Int_t * vIn0, Vec_Int_t * vIn1, Vec_Wrd_t * vSim0, Vec_Wrd_t * vSim1, Vec_Int_t * vTfo )
+Vec_Wrd_t * Gia_ManMulFindSimCone( Gia_Man_t * p, Vec_Int_t * vIn0, Vec_Int_t * vIn1, Vec_Wrd_t * vSim0, Vec_Wrd_t * vSim1, Vec_Int_t * vTfo, int fLits )
 {
     Vec_Wrd_t * vRes = Vec_WrdAlloc( Vec_IntSize(vTfo) );
     Vec_Wrd_t * vSims = Vec_WrdStart( Gia_ManObjNum(p) );
     Gia_Obj_t * pObj; int i, Obj;
     Vec_IntForEachEntry( vIn0, Obj, i )
-        Vec_WrdWriteEntry( vSims, Obj, Vec_WrdEntry(vSim0, i) );
+        Vec_WrdWriteEntry( vSims, fLits ? Abc_Lit2Var(Obj) : Obj, (fLits && Abc_LitIsCompl(Obj)) ? ~Vec_WrdEntry(vSim0, i) : Vec_WrdEntry(vSim0, i) );
     Vec_IntForEachEntry( vIn1, Obj, i )
-        Vec_WrdWriteEntry( vSims, Obj, Vec_WrdEntry(vSim1, i) );
+        Vec_WrdWriteEntry( vSims, fLits ? Abc_Lit2Var(Obj) : Obj, (fLits && Abc_LitIsCompl(Obj)) ? ~Vec_WrdEntry(vSim1, i) : Vec_WrdEntry(vSim1, i) );
     Gia_ManForEachObjVec( vTfo, p, pObj, i ) {
         word Sim0 = Vec_WrdEntry(vSims, Gia_ObjFaninId0p(p, pObj) );
         word Sim1 = Vec_WrdEntry(vSims, Gia_ObjFaninId1p(p, pObj) );
@@ -697,17 +697,17 @@ Vec_Wrd_t * Gia_ManMulFindSimCone( Gia_Man_t * p, Vec_Int_t * vIn0, Vec_Int_t * 
     Vec_WrdFree( vSims );
     return vRes;        
 }
-int Gia_ManMulFindGetArg( Vec_Wrd_t * vSim, int i, int fSigned )
+iword Gia_ManMulFindGetArg( Vec_Wrd_t * vSim, int i, int fSigned )
 {
-    int w, Res = 0; word Word = 0;
+    int w; iword Res = 0; word Word = 0;
     Vec_WrdForEachEntry( vSim, Word, w )
         if ( (Word >> i) & 1 )
-            Res |= (1 << w);
+            Res |= ((iword)1 << w);
     if ( fSigned && ((Word >> i) & 1) )
-        Res |= ~0 << Vec_WrdSize(vSim);
+        Res |= ~(iword)0 << Vec_WrdSize(vSim);
     return Res;
 }
-void Gia_ManMulFindSetArg( Vec_Wrd_t * vSim, int i, int iNum )
+void Gia_ManMulFindSetArg( Vec_Wrd_t * vSim, int i, iword iNum )
 {
     int w;  word * pWords = Vec_WrdArray(vSim);
     for ( w = 0; w < Vec_WrdSize(vSim); w++ )
@@ -716,18 +716,26 @@ void Gia_ManMulFindSetArg( Vec_Wrd_t * vSim, int i, int iNum )
 }
 Vec_Wrd_t * Gia_ManMulFindSim( Vec_Wrd_t * vSim0, Vec_Wrd_t * vSim1, int fSigned )
 {
-    assert( Vec_WrdSize(vSim0) + Vec_WrdSize(vSim1) <= 30 );
+    assert( Vec_WrdSize(vSim0) + Vec_WrdSize(vSim1) <= 62 );
     Vec_Wrd_t * vRes = Vec_WrdStart( Vec_WrdSize(vSim0) + Vec_WrdSize(vSim1) );
     for ( int i = 0; i < 64; i++ )
     {
-        int a = Gia_ManMulFindGetArg( vSim0, i, fSigned );
-        int b = Gia_ManMulFindGetArg( vSim1, i, fSigned );
+        iword a = Gia_ManMulFindGetArg( vSim0, i, fSigned );
+        iword b = Gia_ManMulFindGetArg( vSim1, i, fSigned );
         Gia_ManMulFindSetArg( vRes, i, a * b );
     }
     return vRes;
 }
-void Gia_ManMulFindOutputs( Gia_Man_t * p, Vec_Wec_t * vTerms, int fVerbose )
+Vec_Wrd_t * Gia_ManMulFindSim2( Vec_Wrd_t * vSim0, Vec_Wrd_t * vSim1, int fSigned )
 {
+    extern word * product_many(word *pInfo1, int nBits1, word *pInfo2, int nBits2, int fSigned );
+    word * pRes = product_many( Vec_WrdArray(vSim0), Vec_WrdSize(vSim0), Vec_WrdArray(vSim1), Vec_WrdSize(vSim1), fSigned );
+    return Vec_WrdAllocArray( pRes, Vec_WrdSize(vSim0) + Vec_WrdSize(vSim1) );
+}
+int Gia_ManMulFindOutputs( Gia_Man_t * p, Vec_Wec_t * vTerms, int fLits, int fVerbose )
+{
+    //abctime clkTotal = Abc_Clock();
+    int nDetected = 0;
     Abc_Random(1);
     for ( int m = 0; m < Vec_WecSize(vTerms)/3; m++ ) {
         Vec_Int_t * vIn0 = Vec_WecEntry(vTerms, 3*m+0);
@@ -735,10 +743,10 @@ void Gia_ManMulFindOutputs( Gia_Man_t * p, Vec_Wec_t * vTerms, int fVerbose )
         Vec_Int_t * vOut = Vec_WecEntry(vTerms, 3*m+2);
         Vec_Wrd_t * vSim0 = Vec_WrdStartRandom( Vec_IntSize(vIn0) );
         Vec_Wrd_t * vSim1 = Vec_WrdStartRandom( Vec_IntSize(vIn1) );
-        Vec_Wrd_t * vSimU = Gia_ManMulFindSim( vSim0, vSim1, 0 );
-        Vec_Wrd_t * vSimS = Gia_ManMulFindSim( vSim0, vSim1, 1 );
-        Vec_Int_t * vTfo  = Gia_ManMulFindTfo( p, vIn0, vIn1 );
-        Vec_Wrd_t * vSims = Gia_ManMulFindSimCone( p, vIn0, vIn1, vSim0, vSim1, vTfo );
+        Vec_Wrd_t * vSimU = Gia_ManMulFindSim2( vSim0, vSim1, 0 );
+        Vec_Wrd_t * vSimS = Gia_ManMulFindSim2( vSim0, vSim1, 1 );
+        Vec_Int_t * vTfo  = Gia_ManMulFindTfo( p, vIn0, vIn1, fLits );
+        Vec_Wrd_t * vSims = Gia_ManMulFindSimCone( p, vIn0, vIn1, vSim0, vSim1, vTfo, fLits );
         Vec_Int_t * vOutU = Vec_IntAlloc( 100 );
         Vec_Int_t * vOutS = Vec_IntAlloc( 100 );
         word Word; int w, iPlace;
@@ -762,10 +770,14 @@ void Gia_ManMulFindOutputs( Gia_Man_t * p, Vec_Wec_t * vTerms, int fVerbose )
         if ( Vec_IntCountEntry(vOutU, -1) < Vec_IntSize(vOutU) ||
              Vec_IntCountEntry(vOutS, -1) < Vec_IntSize(vOutS) )
         {
-            if ( Vec_IntCountEntry(vOutU, -1) < Vec_IntCountEntry(vOutS, -1) )
+            if ( Vec_IntCountEntry(vOutU, -1) < Vec_IntCountEntry(vOutS, -1) ) {
                 Vec_IntAppend( vOut, vOutU ), Vec_IntPush(vOut, 0);
-            else
+                nDetected = Vec_IntSize(vOutU) - Vec_IntCountEntry(vOutU, -1);
+            }
+            else {
                 Vec_IntAppend( vOut, vOutS ), Vec_IntPush(vOut, 1);
+                nDetected = Vec_IntSize(vOutS) - Vec_IntCountEntry(vOutS, -1);
+            }
         }
         else
         {
@@ -782,6 +794,8 @@ void Gia_ManMulFindOutputs( Gia_Man_t * p, Vec_Wec_t * vTerms, int fVerbose )
         Vec_IntFree( vOutS );
     }
     Vec_WecRemoveEmpty( vTerms );
+    //Abc_PrintTime( 1, "Output detection time", Abc_Clock() - clkTotal );
+    return nDetected;
 }
 
 /**Function*************************************************************
@@ -814,7 +828,7 @@ Vec_Wec_t * Gia_ManMulFindA( Gia_Man_t * p, Vec_Wec_t * vCuts3, int fVerbose )
     Vec_Wec_t * vXors = Gia_ManMulFindXors( p, vCuts3, fVerbose );
     Vec_Wec_t * vTerms = Gia_ManMulFindAInputs2( p, fVerbose );
     if ( Vec_WecSize(vTerms) )
-        Gia_ManMulFindOutputs( p, vTerms, fVerbose );          
+        Gia_ManMulFindOutputs( p, vTerms, 0, fVerbose );          
     Vec_WecFree( vXors );
     return vTerms;    
 }
@@ -824,30 +838,47 @@ Vec_Wec_t * Gia_ManMulFindB( Gia_Man_t * p, Vec_Wec_t * vCuts4, Vec_Wec_t * vCut
     if ( Vec_WecSize(vCuts4) && Vec_WecSize(vCuts5) )
         vTerms = Gia_ManMulFindBInputs2( p, vCuts4, vCuts5, fVerbose );
     if ( Vec_WecSize(vTerms) )
-        Gia_ManMulFindOutputs( p, vTerms, fVerbose );
+        Gia_ManMulFindOutputs( p, vTerms, 0, fVerbose );
     return vTerms;
 }
 void Gia_ManMulFindPrintSet( Vec_Int_t * vSet, int fLit, int fSkipLast )
 {
     int i, Temp, Limit = Vec_IntSize(vSet) - fSkipLast;
     printf( "{" );
-    Vec_IntForEachEntryStop( vSet, Temp, i, Limit ) {
-        if ( Temp == -1 )
-            printf( "n/a%s", i < Limit-1 ? " ":"" );
-        else
-            printf( "%s%d%s", (fLit & Abc_LitIsCompl(Temp)) ? "~":"", fLit ? Abc_Lit2Var(Temp) : Temp, i < Limit-1 ? " ":"" );
+    if ( Vec_IntSize(vSet) > 16 ) {
+        Vec_IntForEachEntryStop( vSet, Temp, i, 4 ) {
+            if ( Temp == -1 )
+                printf( "n/a%s", i < Limit-1 ? " ":"" );
+            else
+                printf( "%s%d%s", (fLit & Abc_LitIsCompl(Temp)) ? "~":"", fLit ? Abc_Lit2Var(Temp) : Temp, i < Limit-1 ? " ":"" );
+        }
+        printf( "... " );
+        Vec_IntForEachEntryStartStop( vSet, Temp, i, Limit-4, Limit ) {
+            if ( Temp == -1 )
+                printf( "n/a%s", i < Limit-1 ? " ":"" );
+            else
+                printf( "%s%d%s", (fLit & Abc_LitIsCompl(Temp)) ? "~":"", fLit ? Abc_Lit2Var(Temp) : Temp, i < Limit-1 ? " ":"" );
+        }
+    }
+    else {
+        Vec_IntForEachEntryStop( vSet, Temp, i, Limit ) {
+            if ( Temp == -1 )
+                printf( "n/a%s", i < Limit-1 ? " ":"" );
+            else
+                printf( "%s%d%s", (fLit & Abc_LitIsCompl(Temp)) ? "~":"", fLit ? Abc_Lit2Var(Temp) : Temp, i < Limit-1 ? " ":"" );
+        }
     }
     printf( "}" );
 }
-void Gia_ManMulFindPrintOne( Vec_Wec_t * vTerms, int m, int fBooth )
+void Gia_ManMulFindPrintOne( Vec_Wec_t * vTerms, int m, int fBooth, int fInputLits )
 {
     Vec_Int_t * vIn0 = Vec_WecEntry(vTerms, 3*m+0);
     Vec_Int_t * vIn1 = Vec_WecEntry(vTerms, 3*m+1);
     Vec_Int_t * vOut = Vec_WecEntry(vTerms, 3*m+2);
     printf( "%sooth %ssigned %d x %d: ", fBooth ? "B" : "Non-b", Vec_IntEntryLast(vOut) ? "" : "un", Vec_IntSize(vIn0), Vec_IntSize(vIn1) );
-    Gia_ManMulFindPrintSet( vIn0, 0, 0 );
+    Gia_ManMulFindPrintSet( vIn0, fInputLits, 0 );
     printf( " * " );
-    Gia_ManMulFindPrintSet( vIn1, 0, 0 );
+    Gia_ManMulFindPrintSet( vIn1, fInputLits, 0 );
     printf( " = " );
     Gia_ManMulFindPrintSet( vOut, 1, 1 );
     printf( "\n" );
@@ -862,9 +893,9 @@ void Gia_ManMulFind( Gia_Man_t * p, int nCutNum, int fVerbose )
     Vec_Wec_t * vTermsA = Gia_ManMulFindA( p, vCuts3, fVerbose ); 
     printf( "Detected %d booth and %d non-booth multipliers.\n", Vec_WecSize(vTermsB)/3, Vec_WecSize(vTermsA)/3 );
     for ( m = 0; m < Vec_WecSize(vTermsA)/3; m++ )
-        Gia_ManMulFindPrintOne( vTermsA, m, 0 );
+        Gia_ManMulFindPrintOne( vTermsA, m, 0, 0 );
     for ( m = 0; m < Vec_WecSize(vTermsB)/3; m++ )
-        Gia_ManMulFindPrintOne( vTermsB, m, 1 );
+        Gia_ManMulFindPrintOne( vTermsB, m, 1, 0 );
     Vec_WecFree( vTermsB );
     Vec_WecFree( vTermsA );
     Vec_WecFree( vCuts3 );

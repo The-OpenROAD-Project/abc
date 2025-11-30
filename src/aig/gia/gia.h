@@ -140,6 +140,7 @@ struct Gia_Man_t_
     void *         pSatlutWinman; // windowing for SAT-based mapping
     Vec_Int_t *    vPacking;      // packing information
     Vec_Int_t *    vConfigs;      // cell configurations
+    Vec_Str_t *    vConfigs2;     // cell configurations
     char *         pCellStr;      // cell description
     Vec_Int_t *    vLutConfigs;   // LUT configurations
     Vec_Int_t *    vEdgeDelay;    // special edge information
@@ -188,6 +189,7 @@ struct Gia_Man_t_
     Vec_Int_t *    vCoNumsOrig;   // original CO names
     Vec_Int_t *    vIdsOrig;      // original object IDs
     Vec_Int_t *    vIdsEquiv;     // original object IDs proved equivalent
+    Vec_Int_t *    vEquLitIds;    // original object IDs proved equivalent
     Vec_Int_t *    vCofVars;      // cofactoring variables
     Vec_Vec_t *    vClockDoms;    // clock domains
     Vec_Flt_t *    vTiming;       // arrival/required/slack
@@ -249,6 +251,11 @@ struct Gia_Man_t_
     int            iFirstPoId;
     int            iFirstAndObj;
     int            iFirstPoObj;
+    Vec_Str_t *    vTTISOPs;      // truth tables from ISOP computation
+    Vec_Int_t *    vTTLut;      // truth tables from ISOP computation
+    Vec_Int_t *    vMFFCsInfo;    // MFFC information
+    Vec_Int_t *    vMFFCsLuts;        // MFFCs for each lut
+    Vec_Ptr_t *    vLutsRankings;     // LUTs rankings of inputs
 };
 
 
@@ -265,6 +272,7 @@ struct Gps_Par_t_
     int            fSkipMap;
     int            fSlacks;
     int            fNoColor;
+    int            fMapOutStats;
     char *         pDumpFile;
 };
 
@@ -367,6 +375,7 @@ struct Jf_Par_t_
     int            nCutNumMax;
     int            nProcNumMax;
     int            nLutSizeMux;
+    int            nMaxMatches;
     word           Delay;
     word           Area;
     word           Edge;
@@ -382,6 +391,7 @@ struct Jf_Par_t_
     float          Epsilon;
     float *        pTimesArr;
     float *        pTimesReq;
+    char *         ZFile;
 };
 
 static inline unsigned     Gia_ObjCutSign( unsigned ObjId )       { return (1 << (ObjId & 31));                                 }
@@ -1351,7 +1361,7 @@ extern Gia_Man_t *         Gia_ManDupZero( Gia_Man_t * p );
 extern Gia_Man_t *         Gia_ManDupPerm( Gia_Man_t * p, Vec_Int_t * vPiPerm );
 extern Gia_Man_t *         Gia_ManDupPermFlop( Gia_Man_t * p, Vec_Int_t * vFfPerm );
 extern Gia_Man_t *         Gia_ManDupPermFlopGap( Gia_Man_t * p, Vec_Int_t * vFfPerm );
-extern void                Gia_ManDupAppend( Gia_Man_t * p, Gia_Man_t * pTwo );
+extern void                Gia_ManDupAppend( Gia_Man_t * p, Gia_Man_t * pTwo, int fShareCis );
 extern void                Gia_ManDupAppendShare( Gia_Man_t * p, Gia_Man_t * pTwo );
 extern Gia_Man_t *         Gia_ManDupAppendNew( Gia_Man_t * pOne, Gia_Man_t * pTwo );
 extern Gia_Man_t *         Gia_ManDupAppendCones( Gia_Man_t * p, Gia_Man_t ** ppCones, int nCones, int fOnlyRegs );
@@ -1406,6 +1416,12 @@ extern Gia_Man_t *         Gia_ManDemiterToDual( Gia_Man_t * p );
 extern int                 Gia_ManDemiterDual( Gia_Man_t * p, Gia_Man_t ** pp0, Gia_Man_t ** pp1 );
 extern int                 Gia_ManDemiterTwoWords( Gia_Man_t * p, Gia_Man_t ** pp0, Gia_Man_t ** pp1 );
 extern void                Gia_ManProdAdderGen( int nArgA, int nArgB, int Seed, int fSigned, int fCla );
+typedef struct Gia_ChMan_t_ Gia_ChMan_t;
+extern Gia_ChMan_t *       Gia_ManDupChoicesStart( Gia_Man_t * pGia );
+extern void                Gia_ManDupChoicesAdd( Gia_ChMan_t * pMan, Gia_Man_t * pGia );
+extern Gia_Man_t *         Gia_ManDupChoicesFinish( Gia_ChMan_t * pMan );
+extern Vec_Int_t *         Gia_ManComputeMffc( Gia_Man_t * p, Vec_Int_t * vLits, Vec_Int_t * vOuts );
+extern Gia_Man_t *         Gia_ManDupExtractMffc( Gia_Man_t * p, Vec_Int_t * vLits, Vec_Int_t * vAnds, Vec_Int_t * vCos );
 /*=== giaEdge.c ==========================================================*/
 extern void                Gia_ManEdgeFromArray( Gia_Man_t * p, Vec_Int_t * vArray );
 extern Vec_Int_t *         Gia_ManEdgeToArray( Gia_Man_t * p );
@@ -1431,6 +1447,7 @@ extern void                Gia_ManEquivFixOutputPairs( Gia_Man_t * p );
 extern int                 Gia_ManCheckTopoOrder( Gia_Man_t * p );
 extern int *               Gia_ManDeriveNexts( Gia_Man_t * p );
 extern void                Gia_ManDeriveReprs( Gia_Man_t * p );
+extern void                Gia_ManDeriveReprsFromSibls( Gia_Man_t *p );
 extern int                 Gia_ManEquivCountLits( Gia_Man_t * p );
 extern int                 Gia_ManEquivCountLitsAll( Gia_Man_t * p );
 extern int                 Gia_ManEquivCountClasses( Gia_Man_t * p );
@@ -1500,6 +1517,7 @@ extern int                 Gia_ManHashAndMulti( Gia_Man_t * p, Vec_Int_t * vLits
 extern int                 Gia_ManHashAndMulti2( Gia_Man_t * p, Vec_Int_t * vLits );
 extern int                 Gia_ManHashDualMiter( Gia_Man_t * p, Vec_Int_t * vOuts );
 /*=== giaIf.c ===========================================================*/
+extern void                Gia_ManPrintOutputLutStats( Gia_Man_t * p );
 extern void                Gia_ManPrintMappingStats( Gia_Man_t * p, char * pDumpFile );
 extern void                Gia_ManPrintPackingStats( Gia_Man_t * p );
 extern void                Gia_ManPrintLutStats( Gia_Man_t * p );
@@ -1710,7 +1728,8 @@ extern void *              Gia_ManUpdateTimMan2( Gia_Man_t * p, Vec_Int_t * vBox
 extern Gia_Man_t *         Gia_ManUpdateExtraAig( void * pTime, Gia_Man_t * pAig, Vec_Int_t * vBoxPres );
 extern Gia_Man_t *         Gia_ManUpdateExtraAig2( void * pTime, Gia_Man_t * pAig, Vec_Int_t * vBoxesLeft );
 extern Gia_Man_t *         Gia_ManDupCollapse( Gia_Man_t * p, Gia_Man_t * pBoxes, Vec_Int_t * vBoxPres, int fSeq );
-extern int                 Gia_ManVerifyWithBoxes( Gia_Man_t * pGia, int nBTLimit, int nTimeLim, int fSeq, int fDumpFiles, int fVerbose, char * pFileSpec );
+extern int                 Gia_ManVerifyWithBoxes( Gia_Man_t * pGia, int nBTLimit, int nTimeLim, int fSeq, int fNameMap, int fDumpFiles, int fVerbose, char * pFileSpec );
+extern Vec_Int_t *         Gia_ManDeriveBoxMapping( Gia_Man_t * pGia );
 /*=== giaTruth.c ===========================================================*/
 extern word                Gia_LutComputeTruth6( Gia_Man_t * p, int iObj, Vec_Wrd_t * vTruths );
 extern word                Gia_ObjComputeTruthTable6Lut( Gia_Man_t * p, int iObj, Vec_Wrd_t * vTemp );
@@ -1799,6 +1818,9 @@ extern Gia_Man_t *         Gia_ManTtoptCare( Gia_Man_t * p, int nIns, int nOuts,
 extern Gia_Man_t *         Gia_ManTransductionBdd( Gia_Man_t * pGia, int nType, int fMspf, int nRandom, int nSortType, int nPiShuffle, int nParameter, int fLevel, Gia_Man_t * pExdc, int fNewLine, int nVerbose );
 extern Gia_Man_t *         Gia_ManTransductionTt( Gia_Man_t * pGia, int nType, int fMspf, int nRandom, int nSortType, int nPiShuffle, int nParameter, int fLevel, Gia_Man_t * pExdc, int fNewLine, int nVerbose );
 
+/*=== giaRrr.cpp ===========================================================*/
+extern Gia_Man_t *         Gia_ManRrr( Gia_Man_t *pGia, int iSeed, int nWords, int nTimeout, int nSchedulerVerbose, int nPartitionerVerbose, int nOptimizerVerbose, int nAnalyzerVerbose, int nSimulatorVerbose, int nSatSolverVerbose, int fUseBddCspf, int fUseBddMspf, int nConflictLimit, int nSortType, int nOptimizerFlow, int nSchedulerFlow, int nPartitionType, int nDistance, int nJobs, int nThreads, int nPartitionSize, int nPartitionSizeMin, int fDeterministic, int nParallelPartitions, int fOptOnInsert, int fGreedy );
+
 /*=== giaCTas.c ===========================================================*/
 typedef struct Tas_Man_t_  Tas_Man_t;
 extern Tas_Man_t *         Tas_ManAlloc( Gia_Man_t * pAig, int nBTLimit );
@@ -1807,6 +1829,10 @@ extern Vec_Int_t *         Tas_ReadModel( Tas_Man_t * p );
 extern void                Tas_ManSatPrintStats( Tas_Man_t * p );
 extern int                 Tas_ManSolve( Tas_Man_t * p, Gia_Obj_t * pObj, Gia_Obj_t * pObj2 );
 extern int                 Tas_ManSolveArray( Tas_Man_t * p, Vec_Ptr_t * vObjs );
+
+/*=== giaDecGraph.c ===========================================================*/
+extern Gia_Man_t*          Gia_ManDecGraph( Gia_Man_t* p );
+extern Gia_Man_t*          Gia_ManDecGraphFromFile( char* pFileName );
 
 /*=== giaBound.c ===========================================================*/
 typedef struct Bnd_Man_t_  Bnd_Man_t;
@@ -1840,6 +1866,8 @@ extern void                 Bnd_ManPrintStats();
 
 // util
 extern Gia_Man_t*           Bnd_ManCutBoundary( Gia_Man_t *p, Vec_Int_t* vEI, Vec_Int_t* vEO, Vec_Bit_t* vEI_phase, Vec_Bit_t* vEO_phase );
+
+extern int                  Gia_ObjCheckMffc( Gia_Man_t * p, Gia_Obj_t * pRoot, int Limit, Vec_Int_t * vNodes, Vec_Int_t * vLeaves, Vec_Int_t * vInners );
 
 ABC_NAMESPACE_HEADER_END
 

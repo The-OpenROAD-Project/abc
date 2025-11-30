@@ -21,6 +21,7 @@
 #include "wlc.h"
 #include "misc/tim/tim.h"
 #include "base/main/main.h"
+#include "base/main/mainInt.h"
 #include "base/cmd/cmd.h"
 
 ABC_NAMESPACE_IMPL_START
@@ -1239,6 +1240,17 @@ Vec_Int_t * Wlc_BlastDecoder2( Gia_Man_t * pNew, int * pNum, int nNum, Vec_Int_t
     Vec_IntFree( vRes2 );
     return vRes;
 }
+void Wlc_DumpMatrix( Gia_Man_t * pNew, Vec_Wec_t * vProds )
+{
+    char * pFileName = "booth_pps.aig";
+    Vec_Int_t * vLevel; int i, k, Entry;
+    Vec_WecForEachLevel( vProds, vLevel, i )
+        Vec_IntForEachEntry( vLevel, Entry, k )
+            Gia_ManAppendCo(pNew, Entry);
+    Gia_AigerWrite( pNew, pFileName, 0, 0, 0 );
+    printf( "Finished dumping Booth PPs into \"%s\".\n", pFileName );
+    exit(1);
+}
 void Wlc_BlastBooth( Gia_Man_t * pNew, int * pArgA, int * pArgB, int nArgA, int nArgB, Vec_Int_t * vRes, int fSigned, int fCla, Vec_Wec_t ** pvProds, int fVerbose )
 {
     Vec_Wec_t * vProds  = Vec_WecStart( nArgA + nArgB + 3 );
@@ -1323,6 +1335,7 @@ void Wlc_BlastBooth( Gia_Man_t * pNew, int * pArgA, int * pArgB, int nArgA, int 
         Vec_WecPrint( vProds, 0 );
     if ( fVerbose ) 
         printf( "Total PPs = %d.\n", Vec_WecSizeSize(vProds) );
+    //Wlc_DumpMatrix( pNew, vProds );
     //Wlc_BlastPrintMatrix( pNew, vProds, 1 );
     //printf( "Cutoff ID for partial products = %d.\n", Gia_ManObjNum(pNew) );
     if ( pvProds )
@@ -1334,6 +1347,49 @@ void Wlc_BlastBooth( Gia_Man_t * pNew, int * pArgA, int * pArgB, int nArgA, int 
     Vec_WecFree( vLevels );
     Vec_IntFree( vArgB );
 }
+
+void Wlc_NtkDumpMulties( Wlc_Ntk_t * p, Gia_Man_t * pNew )
+{
+    Wlc_Obj_t * pObj; int i;
+    Gia_ManCreateRefs( pNew );
+    Wlc_NtkForEachObj( p, pObj, i ) {
+        if ( pObj->Type != WLC_OBJ_ARI_MULTI )
+            continue;
+        int fSigned  = Wlc_ObjIsSignedFanin01(p, pObj);
+        int nRange   = Wlc_ObjRange( pObj );
+        int nRange0  = Wlc_ObjRange( Wlc_ObjFanin0(p, pObj) );
+        int nRange1  = Wlc_ObjRange( Wlc_ObjFanin1(p, pObj) );
+        int * pFans  = Vec_IntEntryP( &p->vBits, Wlc_ObjCopy(p, i) );
+        int * pFans0 = Vec_IntEntryP( &p->vBits, Wlc_ObjCopy(p, Wlc_ObjFaninId0(pObj)) );
+        int * pFans1 = Vec_IntEntryP( &p->vBits, Wlc_ObjCopy(p, Wlc_ObjFaninId1(pObj)) );
+
+        printf( "\n%d\n", fSigned );
+        printf( "%2d :", nRange0 );
+        for ( int k = 0; k < nRange0; k++ )
+            if ( pFans0[k] == -1 )
+                printf( " -" );
+            else
+                printf( " %c%d(%d)", Abc_LitIsCompl(pFans0[k])?'-':'+', Abc_Lit2Var(pFans0[k]), Gia_ObjRefNumId(pNew, Abc_Lit2Var(pFans0[k])) );
+        printf( "\n" );
+
+        printf( "%2d :", nRange1 );
+        for ( int k = 0; k < nRange1; k++ )
+            if ( pFans1[k] == -1 )
+                printf( " -" );
+            else
+                printf( " %c%d(%d)", Abc_LitIsCompl(pFans1[k])?'-':'+', Abc_Lit2Var(pFans1[k]), Gia_ObjRefNumId(pNew, Abc_Lit2Var(pFans1[k])) );
+        printf( "\n" );
+
+        printf( "%2d :", nRange );
+        for ( int k = 0; k < nRange; k++ )
+            if ( pFans[k] == -1 )
+                printf( " -" );
+            else
+                printf( " %c%d(%d)", Abc_LitIsCompl(pFans[k])?'-':'+', Abc_Lit2Var(pFans[k]), Gia_ObjRefNumId(pNew, Abc_Lit2Var(pFans[k])) );
+        printf( "\n" );
+    }
+}
+
 
 /**Function*************************************************************
 
@@ -1513,9 +1569,12 @@ Gia_Man_t * Wlc_NtkBitBlast( Wlc_Ntk_t * p, Wlc_BstPar_t * pParIn )
                 nRange2 = 0;
 
             // create new box
-            if ( vTables == NULL )
+            if ( vTables == NULL ) {
                 Tim_ManSetDelayTables( pManTime, (vTables = Vec_PtrAlloc(100)) );
+                Vec_PtrPush( vTables, NULL );
+            }
             Tim_ManCreateBox( pManTime, curPo, nRange0 + nRange1 + nRange2, curPi, nRange, Vec_PtrSize(vTables), 0 );
+            Tim_ManBoxSetCopy( pManTime, Tim_ManBoxNum(pManTime)-1, Tim_ManBoxNum(pManTime)-1 );
             curPi += nRange;
             curPo += nRange0 + nRange1 + nRange2;
 
@@ -1983,8 +2042,10 @@ Gia_Man_t * Wlc_NtkBitBlast( Wlc_Ntk_t * p, Wlc_BstPar_t * pParIn )
                 int nRangeMax = Abc_MaxInt(nRange0, nRange1);
                 int * pArg0 = Wlc_VecLoadFanins( vTemp0, pFans0, nRange0, nRangeMax, fSigned );
                 int * pArg1 = Wlc_VecLoadFanins( vTemp1, pFans1, nRange1, nRangeMax, fSigned );
-                if ( nRange0 == nRange1 && Wlc_NtkCountConstBits(pArg0, nRangeMax) < Wlc_NtkCountConstBits(pArg1, nRangeMax) )
+                if ( Wlc_NtkCountConstBits(pArg0, nRangeMax) < Wlc_NtkCountConstBits(pArg1, nRangeMax) ) {
                     ABC_SWAP( int *, pArg0, pArg1 );
+                    ABC_SWAP( int, nRange0, nRange1 );
+                }
                 if ( pPar->fBooth )
                     Wlc_BlastBooth( pNew, pArg0, pArg1, nRange0, nRange1, vRes, fSigned, pPar->fCla, NULL, pParIn->fVerbose );
                 else if ( pPar->fCla )
@@ -2105,8 +2166,10 @@ Gia_Man_t * Wlc_NtkBitBlast( Wlc_Ntk_t * p, Wlc_BstPar_t * pParIn )
         assert( pObj->Type == WLC_OBJ_FF );
 
         // create new box
-        if ( vTables == NULL )
+        if ( vTables == NULL ) {
             Tim_ManSetDelayTables( pManTime, (vTables = Vec_PtrAlloc(100)) );
+            Vec_PtrPush( vTables, NULL );
+        }
         Tim_ManCreateBox( pManTime, curPo, nRangeIn, curPi, nRange, Vec_PtrSize(vTables), 0 );
         curPi += nRange;
         curPo += nRangeIn;
@@ -2685,6 +2748,12 @@ Gia_Man_t * Wlc_NtkBitBlast( Wlc_Ntk_t * p, Wlc_BstPar_t * pParIn )
         Vec_PtrFreeFree( pNew->vNamesOut );  pNew->vNamesOut = NULL;
     }
     pNew->vRegClasses = vRegClasses;
+    // save initial box info
+//    if ( pNew->pManTime ) {
+//        Abc_Frame_t * pAbc = Abc_FrameGetGlobalFrame();
+//        pAbc->vMiniLutObjs = Gia_ManDeriveBoxMapping( pNew );        
+//    }
+    //Wlc_NtkDumpMulties( p, pNew );
     return pNew;
 }
 

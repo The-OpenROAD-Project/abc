@@ -147,7 +147,7 @@ Rtl_Lib_t * Wln_ReadSystemVerilog( char * pFileName, char * pTopModule, char * p
     int fSVlog = strstr(pFileName, ".sv") != NULL;
     if ( strstr(pFileName, ".rtl") )
         return Rtl_LibReadFile( pFileName, pFileName );
-    sprintf( Command, "%s -qp \"read_verilog %s%s %s%s; hierarchy %s%s; %sproc; write_rtlil %s\"",
+    sprintf( Command, "%s -qp \"read_verilog %s%s %s%s; hierarchy %s%s; %sproc; memory -nomap; memory_map; write_rtlil %s\"",
         Wln_GetYosysName(), 
         pDefines   ? "-D"       : "",
         pDefines   ? pDefines   : "",
@@ -178,7 +178,7 @@ Gia_Man_t * Wln_BlastSystemVerilog( char * pFileName, char * pTopModule, char * 
     char * pFileTemp = "_temp_.aig";
     int fRtlil = strstr(pFileName, ".rtl") != NULL;
     int fSVlog = strstr(pFileName, ".sv")  != NULL;
-    sprintf( Command, "%s -qp \"%s %s%s %s%s; hierarchy %s%s; flatten; proc; %saigmap; write_aiger %s\"",
+    sprintf( Command, "%s -qp \"%s %s%s %s%s; hierarchy %s%s; flatten; proc; memory -nomap; memory_map; %saigmap; write_aiger %s\"",
         Wln_GetYosysName(), 
         fRtlil ? "read_rtlil"   : "read_verilog",
         pDefines  ? "-D"        : "",
@@ -210,6 +210,48 @@ Gia_Man_t * Wln_BlastSystemVerilog( char * pFileName, char * pTopModule, char * 
             Gia_ObjFlipFaninC0( pObj );
     }
     return pGia;
+}
+Abc_Ntk_t * Wln_ReadMappedSystemVerilog( char * pFileName, char * pTopModule, char * pDefines, char * pLibrary, int fVerbose )
+{
+    Abc_Ntk_t * pNtk = NULL;
+    char Command[1000];
+    char * pFileTemp = "_temp_.blif";
+    int fSVlog = strstr(pFileName, ".sv")  != NULL;
+    sprintf( Command, "%s -qp \"read_liberty -lib %s; read %s %s%s %s; hierarchy %s%s; flatten; proc; memory -nomap; memory_map; write_blif %s%s -impltf -gates %s\"",
+        Wln_GetYosysName(),
+        pLibrary,
+        fSVlog    ? "-sv "      : "-vlog95",
+        pDefines  ? "-D"        : "",
+        pDefines  ? pDefines    : "",
+        pFileName,
+        pTopModule ? "-top "    : "-auto-top",
+        pTopModule ? pTopModule : "",
+        pTopModule ? "-top "    : "",
+        pTopModule ? pTopModule : "",
+        pFileTemp );
+    if ( fVerbose )
+    printf( "%s\n", Command );
+    if ( !Wln_ConvertToRtl(Command, pFileTemp) )
+        return NULL;
+    sprintf( Command, "read_lib %s", pLibrary );
+    if ( Cmd_CommandExecute( Abc_FrameReadGlobalFrame(), Command ) )
+    {
+        fprintf( stdout, "Cannot execute ABC command \"%s\".\n", Command );
+        unlink( pFileTemp );
+        return NULL;
+    }
+    pNtk = Io_Read( pFileTemp, IO_FILE_BLIF, 1, 0 );
+    if ( pNtk == NULL )
+    {
+        printf( "Reading mapped BLIF from file \"%s\" has failed.\n", pFileTemp );
+        return NULL;
+    }
+    if ( pTopModule ) {
+        ABC_FREE( pNtk->pName );
+        pNtk->pName = Abc_UtilStrsav(pTopModule);
+    }
+    unlink( pFileTemp );
+    return pNtk;
 }
 
 ////////////////////////////////////////////////////////////////////////

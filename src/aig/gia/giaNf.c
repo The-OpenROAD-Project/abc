@@ -1172,7 +1172,10 @@ void Nf_ManCutMatchOne( Nf_Man_t * p, int iObj, int * pCut, int * pCutSet )
             if ( ArrivalA + pC->iDelays[k] <= Required && Required != SCL_INFINITY )
             {
                 Delay = Abc_MaxInt( Delay, ArrivalA + pC->iDelays[k] );
-                AreaF += pBestF[iFanin]->M[fComplF][1].F;
+                if ( AreaF >= (float)1e32 || pBestF[iFanin]->M[fComplF][1].F >= (float)1e32 )
+                    AreaF = (float)1e32;
+                else
+                    AreaF += pBestF[iFanin]->M[fComplF][1].F;
             }
             else 
             {
@@ -1617,8 +1620,7 @@ int Nf_ManSetMapRefs( Nf_Man_t * p )
                 p->pPars->Area++;
                 p->nInvs++;
             }            
-            reqTime = Abc_MinInt( Nf_ObjRequired(p, i, 0), Nf_ObjRequired(p, i, 1) );
-            Tim_ManSetCiRequired( p->pManTim, Gia_ObjCioId(pObj), reqTime );            
+            Tim_ManSetCiRequired( p->pManTim, Gia_ObjCioId(pObj), Nf_ObjRequired(p, i, 0) );            
             continue;
         }
         if ( Gia_ObjIsCo(pObj) ) 
@@ -1930,7 +1932,9 @@ void Nf_ManResetMatches( Nf_Man_t * p, int Round )
     Nf_Mat_t * pDc, * pAc, * pMfan, * pM[2]; 
     int i, c, Arrival;
     // go through matches in the topo order
-    Gia_ManForEachAnd( p->pGia, pObj, i )
+    if ( p->pManTim )
+        Tim_ManIncrementTravId( p->pManTim );      
+    Gia_ManForEachObjWithBoxes( p->pGia, pObj, i )
     {
         if ( Gia_ObjIsBuf(pObj) )
         {
@@ -1945,6 +1949,18 @@ void Nf_ManResetMatches( Nf_Man_t * p, int Round )
                 assert( !pAc->fBest );
                 assert( c==0 || pDc->fCompl );
             }
+            continue;
+        }
+        if ( Gia_ObjIsCi(pObj) ) 
+        {
+            Arrival = Tim_ManGetCiArrival( p->pManTim, Gia_ObjCioId(pObj) );
+            Nf_ObjPrepareCi( p, i, Arrival );
+            continue;
+        }
+        if ( Gia_ObjIsCo(pObj) ) 
+        {
+            Arrival = Nf_ObjMatchD( p, Gia_ObjFaninId0(pObj, i), Gia_ObjFaninC0(pObj) )->D;
+            Tim_ManSetCoArrival( p->pManTim, Gia_ObjCioId(pObj), Arrival );
             continue;
         }
         // select the best match for each phase
@@ -2019,29 +2035,38 @@ void Nf_ManComputeMappingEla( Nf_Man_t * p )
     Mio_Cell2_t * pCell;
     Nf_Mat_t Mb, * pMb = &Mb, * pM;
     word AreaBef, AreaAft, Gain = 0;
-    int i, c, iVar, Id, fCompl, k, * pCut, reqTime;
-    int Required;
-    Nf_ManSetOutputRequireds( p, 1 );
+    int i, c, iVar, Id, fCompl, k, * pCut, Required;
     Nf_ManResetMatches( p, p->Iter - p->pPars->nRounds );
+    Nf_ManSetOutputRequireds( p, 1 );
     Gia_ManForEachObjReverseWithBoxes( p->pGia, pObj, i )
     {
         if ( Gia_ObjIsBuf(pObj) )
         {
             if ( Nf_ObjMapRefNum(p, i, 1) )
                 Nf_ObjUpdateRequired( p, i, 0, Nf_ObjRequired(p, i, 1) - p->InvDelayI );
-            Nf_ObjUpdateRequired( p, Gia_ObjFaninId0(pObj, i), Gia_ObjFaninC0(pObj), Nf_ObjRequired(p, i, 0) );
+            int reqTime = Nf_ObjRequired(p, i, 0);
+            int iObj    = Gia_ObjFaninId0p(p->pGia, pObj);
+            int fCompl  = Gia_ObjFaninC0(pObj);
+            Nf_ObjUpdateRequired( p, iObj, fCompl, reqTime );
+            if ( iObj > 0 && Nf_ObjMatchBest(p, iObj, fCompl)->fCompl )
+                Nf_ObjUpdateRequired( p, iObj, !fCompl, reqTime - p->InvDelayI );
             continue;
         }
         if ( Gia_ObjIsCi(pObj) ) 
         {
-            reqTime = Abc_MinInt( Nf_ObjRequired(p, i, 0), Nf_ObjRequired(p, i, 1) );
-            Tim_ManSetCiRequired( p->pManTim, Gia_ObjCioId(pObj), reqTime );            
+            if ( Nf_ObjMapRefNum(p, i, 1) )
+                Nf_ObjUpdateRequired( p, i, 0, Nf_ObjRequired(p, i, 1) - p->InvDelayI ); 
+            Tim_ManSetCiRequired( p->pManTim, Gia_ObjCioId(pObj), Nf_ObjRequired(p, i, 0) );            
             continue;
         }
         if ( Gia_ObjIsCo(pObj) ) 
         {
-            reqTime = Tim_ManGetCoRequired( p->pManTim, Gia_ObjCioId(pObj) );
-            Nf_ObjUpdateRequired( p, Gia_ObjFaninId0(pObj, i), Gia_ObjFaninC0(pObj), reqTime );        
+            int reqTime = Tim_ManGetCoRequired( p->pManTim, Gia_ObjCioId(pObj) );
+            int iObj    = Gia_ObjFaninId0p(p->pGia, pObj);
+            int fCompl  = Gia_ObjFaninC0(pObj);
+            Nf_ObjUpdateRequired( p, iObj, fCompl, reqTime );
+            if ( iObj > 0 && Nf_ObjMatchBest(p, iObj, fCompl)->fCompl )
+                Nf_ObjUpdateRequired( p, iObj, !fCompl, reqTime - p->InvDelayI );
             continue;
         }        
         for ( c = 0; c < 2; c++ )
@@ -2138,6 +2163,240 @@ void Nf_ManFixPoDrivers( Nf_Man_t * p )
 
 /**Function*************************************************************
 
+  Synopsis    [Dump matches.]
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+void Nf_ManDumpMatches( Nf_Man_t * p )
+{
+    FILE * pFile = fopen( p->pPars->ZFile, "wb" );
+    Gia_Obj_t * pObj; int n, iObj;
+    // output matches
+    Gia_ManForEachCi( p->pGia, pObj, n )
+        fprintf( pFile, "%d input %.2f\n", Abc_Var2Lit(Gia_ObjId(p->pGia, pObj), 0), 0.0 );
+    Gia_ManForEachAnd( p->pGia, pObj, iObj ) {
+        assert( !Gia_ObjIsBuf(pObj) );
+        for ( n = 0; n < 2; n++ ) {
+            int c, * pCut, * pCutSet = Nf_ObjCutSet( p, iObj );
+            Nf_SetForEachCut( pCutSet, pCut, c ) {
+                if ( Abc_Lit2Var(Nf_CutFunc(pCut)) >= Vec_WecSize(p->vTt2Match) )
+                    continue;
+                assert( !Nf_CutIsTriv(pCut, iObj) );
+                assert( Nf_CutSize(pCut) <= p->pPars->nLutSize );
+                assert( Abc_Lit2Var(Nf_CutFunc(pCut)) < Vec_WecSize(p->vTt2Match) );
+                int iFuncLit  = Nf_CutFunc(pCut);
+                int fComplExt = Abc_LitIsCompl(iFuncLit);
+                Vec_Int_t * v = Vec_WecEntry( p->vTt2Match, Abc_Lit2Var(iFuncLit) );
+                int j, k, Info, Offset, iFanin, fComplF;
+                Vec_IntForEachEntryDouble( v, Info, Offset, j ) {
+                    Nf_Cfg_t Cfg = Nf_Int2Cfg(Offset);
+                    int fCompl   = Cfg.fCompl ^ fComplExt;
+                    if ( fCompl != n )
+                        continue;
+                    Mio_Cell2_t*pC = Nf_ManCell( p, Info );
+                    assert( Nf_CutSize(pCut) == (int)pC->nFanins );
+                    fprintf( pFile, "%d ", Abc_Var2Lit(iObj, n) );
+                    fprintf( pFile, "%s ", pC->pName );
+                    fprintf( pFile, "%.2f", pC->AreaF );
+                    Nf_CutForEachVarCompl( pCut, Cfg, iFanin, fComplF, k )
+                        fprintf( pFile, " %d", Abc_Var2Lit(iFanin, fComplF) );
+                    fprintf( pFile, "\n" );
+                }
+            }
+        }
+    }
+    Gia_ManForEachCo( p->pGia, pObj, n )
+        fprintf( pFile, "%d output %.2f %d\n", Abc_Var2Lit(Gia_ObjId(p->pGia, pObj), 0), 0.0, Gia_ObjFaninLit0p(p->pGia, pObj) );
+    // output levels
+    extern int Gia_ManChoiceLevel( Gia_Man_t * p );
+    int LevelMax = Gia_ManChoiceLevel( p->pGia );
+    Gia_ManForEachCiId( p->pGia, iObj, n )
+        fprintf( pFile, "L%d %d\n", Abc_Var2Lit(iObj, 0), 0 );
+    Gia_ManForEachAnd( p->pGia, pObj, iObj )
+        fprintf( pFile, "L%d %d\n", Abc_Var2Lit(iObj, 0), Gia_ObjLevelId(p->pGia, iObj) );
+    Gia_ManForEachCoId( p->pGia, iObj, n )
+        fprintf( pFile, "L%d %d\n", Abc_Var2Lit(iObj, 0), LevelMax+1 );
+    // output mapping
+    Gia_ManForEachCiId( p->pGia, iObj, n )
+        if ( Nf_ObjMapRefNum(p, iObj, 1) )
+            fprintf( pFile, "M%d %s %.2f %d\n", Abc_Var2Lit(iObj, 1), p->pCells[3].pName, p->pCells[3].AreaF, Abc_Var2Lit(iObj, 0) );
+    Gia_ManForEachAnd( p->pGia, pObj, iObj )
+        for ( n = 0; n < 2; n++ )
+            if ( Nf_ObjMapRefNum(p, iObj, n) ) {
+                Nf_Mat_t * pM = Nf_ObjMatchBest(p, iObj, n);
+                if ( pM->fCompl ) {
+                    fprintf( pFile, "M%d %s %.2f %d\n", Abc_Var2Lit(iObj, n), p->pCells[3].pName, p->pCells[3].AreaF, Abc_Var2Lit(iObj, !n) );
+                    continue;
+                }
+                int k, iVar, fCompl, * pCut = Nf_CutFromHandle( Nf_ObjCutSet(p, iObj), pM->CutH );
+                Mio_Cell2_t*pC = Nf_ManCell( p, pM->Gate );
+                fprintf( pFile, "M%d ", Abc_Var2Lit(iObj, n) );
+                fprintf( pFile, "%s ", pC->pName );
+                fprintf( pFile, "%.2f", pC->AreaF );
+                Nf_CutForEachVarCompl( pCut, pM->Cfg, iVar, fCompl, k )
+                    fprintf( pFile, " %d", Abc_Var2Lit(iVar, fCompl) );
+                fprintf( pFile, "\n" );
+    }
+    fclose( pFile );
+}
+void Nf_ManDumpMatchesPrint( Gia_Man_t * pGia, Vec_Int_t * vStore, int nCutSize, int nMaxMatches )
+{
+    int iObj, n, f, m;
+    int nObjs = Gia_ManObjNum( pGia );
+    int * pData;
+    if ( vStore == NULL || nCutSize == 0 || nMaxMatches == 0 )
+        return;
+    pData = Vec_IntArray( vStore );
+    for ( iObj = 0; iObj < nObjs; iObj++ )
+    {
+        Gia_Obj_t * pObj = Gia_ManObj( pGia, iObj );
+        int fPrint = 0;
+        if ( Gia_ObjIsAnd(pObj) && !Gia_ObjIsBuf(pObj) )
+            fPrint = 1;
+        else if ( Gia_ObjIsCo(pObj) )
+            fPrint = 1;
+        if ( !fPrint )
+            continue;
+        for ( n = 0; n < 2; n++ )
+        {
+            int * pNodeStore = pData + (2 * iObj + n) * nCutSize * nMaxMatches;
+            printf( "Node %d (%s) polarity %d has %d matches:\n", iObj, Gia_ObjIsCo(pObj) ? "CO" : "AND", n, nMaxMatches );
+            for ( f = 0; f < nCutSize; f++ )
+            {
+                printf( "  Input %d:", f );
+                for ( m = 0; m < nMaxMatches; m++ )
+                    printf( " %4d", pNodeStore[f * nMaxMatches + m] );
+                printf( "\n" );
+            }
+        }
+    }
+}
+void Nf_ManDumpMatchesBin( Nf_Man_t * p, int nMaxMatches )
+{
+    const char * pNameNA = "n/a";
+    Gia_Obj_t * pObj;
+    Vec_Int_t * vStore;
+    int * pData;
+    int iObj, n, nMatches = 0;
+    int nCutSize = p->pPars->nLutSize;
+    int nObjs = Gia_ManObjNum(p->pGia);
+    char * pFileNameBin = NULL, * pFileNameGates = NULL;
+    FILE * pFileBin = NULL, * pFileGates = NULL;
+    if ( nMaxMatches <= 0 )
+        return;
+    if ( p->pPars->ZFile == NULL )
+        return;
+    assert( nCutSize > 0 && nCutSize <= NF_LEAF_MAX );
+    vStore = Vec_IntStart( 2 * nObjs * nCutSize * nMaxMatches );
+    pData = Vec_IntArray( vStore );
+    pFileNameBin   = Abc_UtilStrsav( Extra_FileNameGenericAppend( p->pPars->ZFile, ".bin" ) );
+    pFileNameGates = Abc_UtilStrsav( Extra_FileNameGenericAppend( p->pPars->ZFile, ".gates" ) );
+    pFileBin   = fopen( pFileNameBin,   "wb" );
+    pFileGates = fopen( pFileNameGates, "wb" );
+    if ( pFileBin == NULL || pFileGates == NULL ) {
+        printf( "Cannot open match dump files \"%s\" and \"%s\".\n", pFileNameBin, pFileNameGates );
+        if ( pFileBin ) fclose( pFileBin );
+        if ( pFileGates ) fclose( pFileGates );
+        ABC_FREE( pFileNameBin );
+        ABC_FREE( pFileNameGates );
+        Vec_IntFree( vStore );
+        return;
+    }
+    for ( iObj = 0; iObj < nObjs; iObj++ ) {
+        pObj = Gia_ManObj( p->pGia, iObj );
+        assert( !Gia_ObjIsBuf(pObj) );
+        for ( n = 0; n < 2; n++ ) {
+            int Slot = 0;
+            int k;
+            int LitBuffer[NF_LEAF_MAX];
+            int * pNodeStore = pData + (2 * iObj + n) * nCutSize * nMaxMatches;
+            memset( pNodeStore, 0, sizeof(int) * nCutSize * nMaxMatches );
+            if ( Gia_ObjIsCo(pObj) && n == 0 && Slot < nMaxMatches ) {
+                pNodeStore[Slot] = Gia_ObjFaninLit0p( p->pGia, pObj );
+                fprintf( pFileGates, "%s %.2f\n", pNameNA, 0.0 );
+                Slot++;
+                nMatches++;
+            }
+            if ( Gia_ObjIsAnd(pObj) ) {
+                int c, * pCut, * pCutSet = Nf_ObjCutSet( p, iObj );
+                Nf_SetForEachCut( pCutSet, pCut, c )
+                {
+                    int iFuncLit, fComplExt;
+                    Vec_Int_t * vVec;
+                    int j, Info, Offset;
+                    if ( Slot == nMaxMatches )
+                        break;
+                    if ( Abc_Lit2Var(Nf_CutFunc(pCut)) >= Vec_WecSize(p->vTt2Match) )
+                        continue;
+                    if ( Nf_CutIsTriv(pCut, iObj) )
+                        continue;
+                    assert( Nf_CutSize(pCut) <= nCutSize );
+                    iFuncLit = Nf_CutFunc(pCut);
+                    fComplExt = Abc_LitIsCompl(iFuncLit);
+                    vVec = Vec_WecEntry( p->vTt2Match, Abc_Lit2Var(iFuncLit) );
+                    Vec_IntForEachEntryDouble( vVec, Info, Offset, j )
+                    {
+                        Nf_Cfg_t Cfg = Nf_Int2Cfg( Offset );
+                        int fCompl = Cfg.fCompl ^ fComplExt;
+                        Mio_Cell2_t * pCell = NULL;
+                        const char * pGateName;
+                        float Area = 0.0;
+                        int iFanin, fComplF, nLitCount = 0;
+                        if ( fCompl != n )
+                            continue;
+                        if ( Slot == nMaxMatches )
+                            break;
+                        if ( Info >= 0 )
+                            pCell = Nf_ManCell( p, Info );
+                        pGateName = (pCell && pCell->pName) ? pCell->pName : pNameNA;
+                        Area      = pCell ? pCell->AreaF : 0.0f;
+                        Nf_CutForEachVarCompl( pCut, Cfg, iFanin, fComplF, k )
+                            LitBuffer[nLitCount++] = Abc_Var2Lit( iFanin, fComplF );
+                        for ( k = 0; k < nCutSize; k++ )
+                            pNodeStore[k * nMaxMatches + Slot] = 0;
+                        for ( k = 0; k < nLitCount; k++ )
+                            pNodeStore[k * nMaxMatches + Slot] = LitBuffer[k];
+                        fprintf( pFileGates, "%s %.2f\n", pGateName, Area );
+                        Slot++;
+                        nMatches++;
+                    }
+                }
+            }
+            while ( Slot < nMaxMatches ) {
+                fprintf( pFileGates, "%s %.2f\n", pNameNA, 0.0 );
+                Slot++;
+            }
+        }
+    }
+    {
+        int Num = 3;
+        fwrite( &Num, 4, 1, pFileBin );
+        Num = 2 * nObjs;
+        fwrite( &Num, 4, 1, pFileBin );
+        Num = nCutSize;
+        fwrite( &Num, 4, 1, pFileBin );
+        Num = nMaxMatches;
+        fwrite( &Num, 4, 1, pFileBin );
+    }
+    fwrite( pData, 4, Vec_IntSize(vStore), pFileBin );
+    if ( p->pPars->fVerbose )
+        printf( "Dumped %d matches (limit %d) into binary file \"%s\" (%.2f MB).\n", 
+            nMatches, nMaxMatches, pFileNameBin, Vec_IntMemory(vStore)/(1<<20) );
+    fclose( pFileBin );
+    fclose( pFileGates );
+    //Nf_ManDumpMatchesPrint( p->pGia, vStore, nCutSize, nMaxMatches );
+    Vec_IntFree( vStore );
+    ABC_FREE( pFileNameBin );
+    ABC_FREE( pFileNameGates );
+}
+
+/**Function*************************************************************
+
   Synopsis    [Deriving mapping.]
 
   Description []
@@ -2191,6 +2450,12 @@ Gia_Man_t * Nf_ManDeriveMapping( Nf_Man_t * p )
     }
 //    assert( Vec_IntCap(vMapping) == 16 || Vec_IntSize(vMapping) == Vec_IntCap(vMapping) );
     p->pGia->vCellMapping = vMapping;
+    if ( p->pPars->ZFile ) {
+        if ( p->pPars->nMaxMatches )
+            Nf_ManDumpMatchesBin( p, p->pPars->nMaxMatches );
+        else 
+            Nf_ManDumpMatches( p );
+    }
     return p->pGia;
 }
 void Nf_ManUpdateStats( Nf_Man_t * p )
@@ -2649,6 +2914,9 @@ Gia_Man_t * Nf_ManPerformMapping( Gia_Man_t * p, Jf_Par_t * pPars )
         pNew = Nf_ManPerformMappingInt( p, pPars );
         Gia_ManTransferTiming( pNew, p );
         //Gia_ManCellMappingVerify( pNew );
+        // remove choices after mapping
+        ABC_FREE( pNew->pReprs );
+        ABC_FREE( pNew->pNexts );        
     }
     //pNew->MappedDelay = (int)((If_Par_t *)pp)->FinalDelay;
     //pNew->MappedArea  = (int)((If_Par_t *)pp)->FinalArea;
@@ -2661,4 +2929,3 @@ Gia_Man_t * Nf_ManPerformMapping( Gia_Man_t * p, Jf_Par_t * pPars )
 
 
 ABC_NAMESPACE_IMPL_END
-

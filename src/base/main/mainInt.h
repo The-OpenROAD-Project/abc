@@ -33,6 +33,7 @@
 #include "aig/gia/gia.h"
 #include "proof/ssw/ssw.h"
 #include "proof/fra/fra.h"
+#include "misc/vec/vecHsh.h"
 
 #ifdef ABC_USE_CUDD
 #include "bdd/extrab/extraBdd.h"
@@ -66,6 +67,7 @@ struct Abc_Frame_t_
     st__table *      tAliases;      // the alias table
     st__table *      tFlags;        // the flag table
     Vec_Ptr_t *     aHistory;      // the command history
+    int             iStartHistory; // beginning of the new history file
     // the functionality
     Abc_Ntk_t *     pNtkCur;       // the current network
     Abc_Ntk_t *     pNtkBestDelay; // the current network
@@ -97,7 +99,8 @@ struct Abc_Frame_t_
     void *          pManDsd;       // decomposition manager
     void *          pManDsd2;      // decomposition manager
     // libraries for mapping
-    void *          pLibLut;       // the current LUT library
+    void *          pLibLut[ABC_LUT_LIBS]; // the current LUT library
+    void *          pLibCell;      // the current cell library
     void *          pLibBox;       // the current box library
     void *          pLibGen;       // the current genlib
     void *          pLibGen2;      // the current genlib
@@ -151,6 +154,7 @@ struct Abc_Frame_t_
     void *          pAbcPla;
     Abc_Nam_t *     pJsonStrs;
     Vec_Wec_t *     vJsonObjs;
+    Hsh_VecMan_t *  pHash;
 #ifdef ABC_USE_CUDD
     DdManager *     dd;            // temporary BDD package
 #endif
@@ -158,6 +162,8 @@ struct Abc_Frame_t_
     Gia_Man_t *     pGiaMiniLut; 
     Vec_Int_t *     vCopyMiniAig;
     Vec_Int_t *     vCopyMiniLut;
+    Vec_Int_t *     vMiniLutObjs;
+    Vec_Int_t *     vObjDelays;
     int *           pArray;
     int *           pBoxes;
     void *          pNdr;
@@ -208,7 +214,10 @@ extern ABC_DLL char *          Abc_UtilsGetUsersInput( Abc_Frame_t * pAbc );
 extern ABC_DLL void            Abc_UtilsPrintHello( Abc_Frame_t * pAbc );
 extern ABC_DLL void            Abc_UtilsPrintUsage( Abc_Frame_t * pAbc, char * ProgName );
 extern ABC_DLL void            Abc_UtilsSource( Abc_Frame_t * pAbc );
-
+extern ABC_DLL void            Abc_FrameStoreStart( Abc_Frame_t * pAbc );
+extern ABC_DLL void            Abc_FrameStoreStop( Abc_Frame_t * pAbc );
+extern ABC_DLL void            Abc_FrameStoreAdd( Abc_Frame_t * pAbc, Gia_Man_t * p );
+extern ABC_DLL void            Abc_FrameStorePrint( Abc_Frame_t * pAbc );
 
 
 ABC_NAMESPACE_HEADER_END

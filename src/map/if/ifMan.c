@@ -19,6 +19,7 @@
 ***********************************************************************/
 
 #include "if.h"
+#include "misc/extra/extra.h"
 
 ABC_NAMESPACE_IMPL_START
 
@@ -209,8 +210,201 @@ void If_ManRestart( If_Man_t * p )
   SeeAlso     []
 
 ***********************************************************************/
+void If_ManSimpleSort( int * pArray, int nSize )
+{
+    int temp, i, j, best_i;
+    for ( i = 0; i < nSize-1; i++ ) {
+        best_i = i;
+        for ( j = i+1; j < nSize; j++ )
+            if ( pArray[j] < pArray[best_i] )
+                best_i = j;
+        temp = pArray[i]; 
+        pArray[i] = pArray[best_i]; 
+        pArray[best_i] = temp;
+    }
+}
+void If_ManDumpCut( If_Cut_t * pCut, int nLutSize, Vec_Int_t * vCuts )
+{
+    int i;
+    for ( i = 0; i < pCut->nLeaves; i++ )
+        Vec_IntPush( vCuts, pCut->pLeaves[i] );
+    for ( ; i < nLutSize; i++ )
+        Vec_IntPush( vCuts, -1 );
+}
+void If_ManDumpCutsAndCost( If_Man_t * p, If_Obj_t * pObj, Vec_Int_t * vCuts, Vec_Int_t * vCutCosts )
+{
+    If_Cut_t * pCut; int k, nCuts = 0;
+    If_ObjForEachCut( pObj, pCut, k ) {
+        If_ManDumpCut( pCut, p->pPars->nLutSize, vCuts );
+        Vec_IntPush( vCutCosts, 1 );
+        if ( ++nCuts == p->pPars->nCutsMax )
+            break;
+    }
+    while ( nCuts < p->pPars->nCutsMax ) {
+        for ( k = 0; k < p->pPars->nLutSize; k++ )
+            Vec_IntPush( vCuts, -1 );
+        Vec_IntPush( vCutCosts, 1 );
+        nCuts++;
+    }
+    assert( nCuts == p->pPars->nCutsMax );
+}
+void If_ManDumpCutsAndCostAdd( int Obj, int nCutsMax, int nLutSize, Vec_Int_t * vCopy, Vec_Int_t * vCuts, Vec_Int_t * vCutCosts, Vec_Int_t * vCutsOut, Vec_Int_t * vCutCostsOut )
+{
+    int i, * pCuts = Vec_IntEntryP( vCuts, Obj * nCutsMax * nLutSize );
+    for ( i = 0; i < nCutsMax * nLutSize; i++ )
+        pCuts[i] = Vec_IntEntry(vCopy, pCuts[i]);
+    for ( i = 0; i < nCutsMax; i++ )
+        If_ManSimpleSort( pCuts + i*nLutSize, nLutSize );
+    for ( i = 0; i < nCutsMax * nLutSize; i++ )
+        Vec_IntPush( vCutsOut, pCuts[i] );
+    for ( i = 0; i < nCutsMax; i++ )
+        Vec_IntPush( vCutCostsOut, Vec_IntEntry( vCutCosts, Obj * nCutsMax + i ) );
+}
+int If_ManDumpData2( If_Man_t * p, FILE * pFile )
+{
+    Vec_Int_t * vCopy = Vec_IntStartFull( If_ManObjNum(p) );
+    Vec_Int_t * vCopy2 = Vec_IntAlloc( If_ManObjNum(p) );
+    Vec_Int_t * vLevelLims = Vec_IntAlloc( p->nLevelMax + 1 );
+    Vec_Int_t * vCuts = Vec_IntAlloc( 1 << 20 );
+    Vec_Int_t * vFanins = Vec_IntAlloc( If_ManCoNum(p) );
+    Vec_Int_t * vCutCosts = Vec_IntAlloc( 1 << 16 );
+    Vec_Int_t * vLevel; If_Obj_t * pObj; 
+    int i, k, Obj, nObjs = 0, nBytes = 0;
+    Vec_Wec_t * vLevels = Vec_WecStart( p->nLevelMax );
+    If_ManForEachNode( p, pObj, i ) 
+        Vec_WecPush( vLevels, pObj->Level, i );
+    Vec_IntWriteEntry( vCopy, 0, nObjs++ );
+    If_ManForEachCi( p, pObj, i )
+        Vec_IntWriteEntry( vCopy, pObj->Id, nObjs++ );
+    Vec_WecForEachLevelStart( vLevels, vLevel, i, 1 ) 
+        Vec_IntForEachEntry( vLevel, Obj, k ) {
+            Vec_IntWriteEntry( vCopy, Obj, nObjs++ );
+            Vec_IntPush( vCopy2, Obj - 1 - If_ManCiNum(p) );
+        }
+    assert( Vec_IntSize(vCopy2) == If_ManAndNum(p) );
+    assert( nObjs == 1 + If_ManCiNum(p) + If_ManAndNum(p) );      
+    nObjs = If_ManCiNum(p) + 1;
+    Vec_WecForEachLevelStart( vLevels, vLevel, i, 1 ) {
+        Vec_IntPush( vLevelLims, nObjs );
+        nObjs += Vec_IntSize(vLevel);
+    }
+    Vec_IntPush( vLevelLims, nObjs );
+    assert( Vec_IntSize(vLevelLims) == p->nLevelMax + 1 );
+    Vec_IntForEachEntry( vCopy2, Obj, i )
+        If_ManDumpCutsAndCostAdd( Obj, p->pPars->nCutsMax, p->pPars->nLutSize, vCopy, p->vCuts, p->vCutCosts, vCuts, vCutCosts );
+    assert( Vec_IntSize(vCuts) == If_ManAndNum(p) * p->pPars->nCutsMax * p->pPars->nLutSize );
+    assert( Vec_IntSize(vCutCosts) == If_ManAndNum(p) * p->pPars->nCutsMax );
+    If_ManForEachCo( p, pObj, i )
+        Vec_IntPush( vFanins, Vec_IntEntry(vCopy, pObj->pFanin0->Id) );
+    nBytes += fwrite( Vec_IntArray(vCuts),      1, sizeof(int)*Vec_IntSize(vCuts),      pFile );
+    nBytes += fwrite( Vec_IntArray(vFanins),    1, sizeof(int)*Vec_IntSize(vFanins),    pFile );
+    nBytes += fwrite( Vec_IntArray(vLevelLims), 1, sizeof(int)*Vec_IntSize(vLevelLims), pFile );
+    nBytes += fwrite( Vec_IntArray(vCutCosts),  1, sizeof(int)*Vec_IntSize(vCutCosts),  pFile );
+    if ( 0 ) {
+        Vec_WecPrint( vLevels, 0 );
+        Vec_IntPrint( vCopy );
+        Vec_IntPrint( vCopy2 );
+        Vec_IntPrint( vLevelLims );
+        Vec_IntPrint( vCuts );
+        Vec_IntPrint( vFanins );
+        Vec_IntPrint( vCutCosts );
+    }
+    Vec_WecFree( vLevels );
+    Vec_IntFree( vCopy );
+    Vec_IntFree( vCopy2 );
+    Vec_IntFree( vLevelLims );
+    Vec_IntFree( vCuts );
+    Vec_IntFree( vFanins );    
+    Vec_IntFree( vCutCosts );    
+    return nBytes;
+}
+int If_ManDumpData( If_Man_t * p, FILE * pFile )
+{
+    int nSpace = p->pPars->nCutsMax * p->pPars->nLutSize;
+    If_Obj_t * pObj; int i, nBytes;
+    Vec_Int_t * vCuts = Vec_IntAlloc( 1 << 20 );
+    Vec_IntFill( vCuts, (1 + If_ManCiNum(p))*nSpace, -1 );
+    Vec_IntAppend( vCuts, p->vCuts );
+    If_ManForEachCo( p, pObj, i )  {
+        Vec_IntPush( vCuts, If_ObjFanin0(pObj)->Id );
+        Vec_IntFillExtra( vCuts, Vec_IntSize(vCuts)+nSpace-1, -1 ); 
+    }
+    nBytes = fwrite( Vec_IntArray(vCuts), 1, sizeof(int)*Vec_IntSize(vCuts), pFile );
+    assert( nBytes == If_ManObjNum(p)*nSpace*sizeof(int) );
+    Vec_IntFree( vCuts );
+    return nBytes;
+}
+
+/**Function*************************************************************
+
+  Synopsis    []
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
 void If_ManStop( If_Man_t * p )
 {
+    if ( p->pPars->fDumpFile && p->pPars->nLutSize <= 6 ) 
+    {
+        char pFileName[1000] = {0};
+        // "I15_O20_L32_N256_C16_K6__name.bin"
+        char * pName = Extra_FileNameGeneric(Extra_FileNameWithoutPath(p->pName));
+        sprintf( pFileName, "%s__n%d_c%d_k%d.bin", pName, If_ManObjNum(p), p->pPars->nCutsMax, p->pPars->nLutSize );
+        ABC_FREE( pName );
+        FILE * pFile = fopen( pFileName, "wb" );
+        if ( pFile == NULL )
+            printf( "Cannot open file \"%s\" for writing.\n", pFileName );
+        else {
+            int nBytes = If_ManDumpData( p, pFile );
+            //int nBytes2 = sizeof(int) * (If_ManAndNum(p) * p->pPars->nCutsMax * p->pPars->nLutSize + If_ManCoNum(p) + p->nLevelMax + 1);
+            //nBytes2 += sizeof(int) * (If_ManAndNum(p) * p->pPars->nCutsMax);
+            //assert( nBytes == nBytes2 );
+            fclose( pFile );
+            printf( "Finished writing cut information into file \"%s\" (%.3f MB).\n", pFileName, 1.0 * nBytes / (1<<20) );
+        }
+    }
+    else if ( p->pPars->fDumpFile && p->pPars->fTruth ) 
+    {
+        char pFileName[1000] = {0}, pBuffer[100];
+        int nUnique = 0, nChunks = 0, nChunkSize = 1 << 10, nBytes = 0;
+        char * pName = Extra_FileNameGeneric(Extra_FileNameWithoutPath(p->pName));
+        sprintf( pFileName, "%s__", pName );
+        ABC_FREE( pName );        
+        for ( int i = 7; i <= p->pPars->nLutSize; i++ ) {
+            nUnique = Vec_MemEntryNum(p->vTtMem[i]);
+            nChunks = (nUnique + nChunkSize - 1) / nChunkSize;
+            printf( "LutSize = %2d  Unique = %7d  Chunks = %7d\n", i, nUnique, nChunks );            
+            sprintf( pBuffer, "%s%02d_%02d", i == 7 ? "":"__", i, nChunks );
+            strcat( pFileName, pBuffer );
+        }
+        strcat( pFileName, ".bin" );
+        FILE * pFile = fopen( pFileName, "wb" );
+        if ( pFile == NULL )
+            printf( "Cannot open file \"%s\" for writing.\n", pFileName );
+        else {
+            for ( int i = 7; i <= p->pPars->nLutSize; i++ ) {
+                nUnique = Vec_MemEntryNum(p->vTtMem[i]);
+                nChunks = (nUnique + nChunkSize - 1) / nChunkSize;
+                word * pEntry; int k, Count = 0;
+                int nEntrySize = Vec_MemEntrySize(p->vTtMem[i]);
+                Vec_MemForEachEntry( p->vTtMem[i], pEntry, k )
+                    Count += fwrite( (unsigned *)pEntry, 1, sizeof(word) * nEntrySize, pFile );
+                word * pZeros = ABC_CALLOC( word, nEntrySize );
+                for ( ; k < nChunks * nChunkSize; k++ )
+                    Count += fwrite( (unsigned *)pZeros, 1, sizeof(word) * nEntrySize, pFile );
+                ABC_FREE( pZeros );
+                assert( Count == nChunks * nChunkSize * nEntrySize * sizeof(word) );
+                nBytes += nChunks * nChunkSize * nEntrySize * sizeof(word);                
+            }
+            fclose( pFile );
+            printf( "Finished writing truth tables into file \"%s\" (%.3f MB).\n", pFileName, 1.0 * nBytes / (1<<20) );
+        }
+    }
+
     extern void If_ManCacheAnalize( If_Man_t * p );
     int i;
     if ( p->pPars->fVerbose && p->vCutData )
@@ -275,6 +469,8 @@ void If_ManStop( If_Man_t * p )
     Vec_PtrFreeP( &p->vVisited );
     Vec_StrFreeP( &p->vMarks );
     Vec_IntFreeP( &p->vVisited2 );
+    Vec_IntFreeP( &p->vCuts );
+    Vec_IntFreeP( &p->vCutCosts );
     if ( p->vPairHash )
         Hash_IntManStop( p->vPairHash );
     for ( i = 6; i <= Abc_MaxInt(6,p->pPars->nLutSize); i++ )

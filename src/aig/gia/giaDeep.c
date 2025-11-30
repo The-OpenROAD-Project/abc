@@ -43,7 +43,7 @@ ABC_NAMESPACE_IMPL_START
   SeeAlso     []
 
 ***********************************************************************/
-Gia_Man_t * Gia_ManDeepSynOne( int nNoImpr, int TimeOut, int nAnds, int Seed, int fUseTwo, int fVerbose )
+Gia_Man_t * Gia_ManDeepSynOne( int nNoImpr, int TimeOut, int nAnds, int Seed, int fUseTwo, int fVerbose, Vec_Ptr_t * vGias )
 {
     abctime nTimeToStop = TimeOut ? Abc_Clock() + TimeOut * CLOCKS_PER_SEC : 0;
     abctime clkStart    = Abc_Clock();
@@ -100,6 +100,8 @@ Gia_Man_t * Gia_ManDeepSynOne( int nNoImpr, int TimeOut, int nAnds, int Seed, in
             pNew = Gia_ManDup( pTemp );
             fChange = 1;
             iIterLast = i;
+            if ( vGias ) 
+                Vec_PtrPush( vGias, Gia_ManDup(pTemp) );
         }
         else if ( Gia_ManAndNum(pNew) + Gia_ManAndNum(pNew)/10 < Gia_ManAndNum(pTemp) ) 
         {
@@ -139,16 +141,19 @@ Gia_Man_t * Gia_ManDeepSynOne( int nNoImpr, int TimeOut, int nAnds, int Seed, in
             nAndsMin, nAnds, i, (float)1.0*(Abc_Clock() - clkStart)/CLOCKS_PER_SEC );
     return pNew;
 }
-Gia_Man_t * Gia_ManDeepSyn( Gia_Man_t * pGia, int nIters, int nNoImpr, int TimeOut, int nAnds, int Seed, int fUseTwo, int fVerbose )
+Gia_Man_t * Gia_ManDeepSyn( Gia_Man_t * pGia, int nIters, int nNoImpr, int TimeOut, int nAnds, int Seed, int fUseTwo, int fChoices, int fVerbose )
 {
+    Vec_Ptr_t * vGias = fChoices ? Vec_PtrAlloc(100) : NULL;
     Gia_Man_t * pInit = Gia_ManDup(pGia);
     Gia_Man_t * pBest = Gia_ManDup(pGia);
     Gia_Man_t * pThis;
     int i;
+    if ( vGias ) 
+        Vec_PtrPush( vGias, Gia_ManDup(pGia) );    
     for ( i = 0; i < nIters; i++ )
     {
         Abc_FrameUpdateGia( Abc_FrameGetGlobalFrame(), Gia_ManDup(pInit) );
-        pThis = Gia_ManDeepSynOne( nNoImpr, TimeOut, nAnds, Seed+i, fUseTwo, fVerbose );
+        pThis = Gia_ManDeepSynOne( nNoImpr, TimeOut, nAnds, Seed+i, fUseTwo, fVerbose, vGias );
         if ( Gia_ManAndNum(pBest) > Gia_ManAndNum(pThis) ) 
         {
             Gia_ManStop( pBest );
@@ -159,7 +164,78 @@ Gia_Man_t * Gia_ManDeepSyn( Gia_Man_t * pGia, int nIters, int nNoImpr, int TimeO
         
     }
     Gia_ManStop( pInit );
+    if ( vGias) {
+        if ( Vec_PtrSize(vGias) > 1 ) {
+            extern Gia_Man_t * Gia_ManCreateChoicesArray( Vec_Ptr_t * vGias, int fVerbose );
+            Gia_ManStopP( &pBest );
+            pBest = Gia_ManCreateChoicesArray( vGias, fVerbose );
+        }
+        // cleanup
+        Gia_Man_t * pTemp;
+        Vec_PtrForEachEntry( Gia_Man_t *, vGias, pTemp, i )
+            Gia_ManStop( pTemp );
+        Vec_PtrFree( vGias ); 
+    }
     return pBest;
+}
+
+/**Function*************************************************************
+
+  Synopsis    [Generating one AIG by applying a randomized script.]
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+Gia_Man_t * Gia_ManRandSyn( Gia_Man_t * p, unsigned random_seed )
+{
+    char * pCompress2rs = "balance -l; resub -K 6 -l; rewrite -l; resub -K 6 -N 2 -l; refactor -l; resub -K 8 -l; balance -l; resub -K 8 -N 2 -l; rewrite -l; resub -K 10 -l; rewrite -z -l; resub -K 10 -N 2 -l; balance -l; resub -K 12 -l; refactor -z -l; resub -K 12 -N 2 -l; rewrite -z -l; balance -l";
+    unsigned Rand = random_seed;
+    int fDch = Rand & 1;
+    //int fCom = (Rand >> 1) & 3;
+    int fCom = (Rand >> 1) & 1;
+    int fFx  = (Rand >> 2) & 1;
+    int fUseTwo = 0;
+    int KLut = fUseTwo ? 2 + (Rand % 5) : 3 + (Rand % 4);
+    //int fChange = 0;
+    char Command[2000];
+    char pComp[1000];
+    if ( fCom == 3 )
+        sprintf( pComp, "; &put; %s; %s; %s; &get", pCompress2rs, pCompress2rs, pCompress2rs );
+    else if ( fCom == 2 )
+        sprintf( pComp, "; &put; %s; %s; &get", pCompress2rs, pCompress2rs );
+    else if ( fCom == 1 )
+        sprintf( pComp, "; &put; %s; &get", pCompress2rs );
+    else if ( fCom == 0 )
+        sprintf( pComp, "; &dc2" );
+    sprintf( Command, "&dch%s; &if -a -K %d; &mfs -e -W 20 -L 20%s%s",
+        fDch ? " -f" : "", KLut, fFx ? "; &fx; &st" : "", pComp );
+    Gia_Man_t * pOld = Abc_FrameGetGia(Abc_FrameGetGlobalFrame());
+    Abc_FrameUpdateGia( Abc_FrameGetGlobalFrame(), Gia_ManDup(p) );
+    if ( Abc_FrameIsBatchMode() )
+    {
+        if ( Cmd_CommandExecute(Abc_FrameGetGlobalFrame(), Command) )
+        {
+            Abc_Print( 1, "Something did not work out with the command \"%s\".\n", Command );
+            return NULL;
+        }
+    }
+    else
+    {
+        Abc_FrameSetBatchMode( 1 );
+        if ( Cmd_CommandExecute(Abc_FrameGetGlobalFrame(), Command) )
+        {
+            Abc_Print( 1, "Something did not work out with the command \"%s\".\n", Command );
+            return NULL;
+        }
+        Abc_FrameSetBatchMode( 0 );
+    }
+    Gia_Man_t * pRes = Abc_FrameGetGia(Abc_FrameGetGlobalFrame());
+    Abc_FrameUpdateGia( Abc_FrameGetGlobalFrame(), pOld );
+    return pRes;
 }
 
 ////////////////////////////////////////////////////////////////////////

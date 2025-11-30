@@ -480,7 +480,7 @@ cuddDynamicAllocNode(
 
     node = table->nextFree;
     table->nextFree = node->next;
-    //node->Id = 0;
+    node->Id = (++table->allocated2<<4);
     return (node);
 
 } /* end of cuddDynamicAllocNode */
@@ -937,11 +937,11 @@ cuddSwapInPlace(
                 /* For each element tmp in collision list xlist[posn]. */
                 previousP = &(xlist[posn]);
                 tmp = *previousP;
-                while (f1 < cuddT(tmp)) {
+                while (cuddF2L(f1) < cuddF2L(cuddT(tmp))) {
                     previousP = &(tmp->next);
                     tmp = *previousP;
                 }
-                while (f1 == cuddT(tmp) && f0 < cuddE(tmp)) {
+                while (f1 == cuddT(tmp) && cuddF2L(f0) < cuddF2L(cuddE(tmp))) {
                     previousP = &(tmp->next);
                     tmp = *previousP;
                 }
@@ -998,11 +998,11 @@ cuddSwapInPlace(
                 /* For each element newf1 in collision list xlist[posn]. */
                 previousP = &(xlist[posn]);
                 newf1 = *previousP;
-                while (f11 < cuddT(newf1)) {
+                while (cuddF2L(f11) < cuddF2L(cuddT(newf1))) {
                     previousP = &(newf1->next);
                     newf1 = *previousP;
                 }
-                while (f11 == cuddT(newf1) && f01 < cuddE(newf1)) {
+                while (f11 == cuddT(newf1) && cuddF2L(f01) < cuddF2L(cuddE(newf1))) {
                     previousP = &(newf1->next);
                     newf1 = *previousP;
                 }
@@ -1052,11 +1052,11 @@ cuddSwapInPlace(
                 /* For each element newf0 in collision list xlist[posn]. */
                 previousP = &(xlist[posn]);
                 newf0 = *previousP;
-                while (f10 < cuddT(newf0)) {
+                while (cuddF2L(f10) < cuddF2L(cuddT(newf0))) {
                     previousP = &(newf0->next);
                     newf0 = *previousP;
                 }
-                while (f10 == cuddT(newf0) && f00 < cuddE(newf0)) {
+                while (f10 == cuddT(newf0) && cuddF2L(f00) < cuddF2L(cuddE(newf0))) {
                     previousP = &(newf0->next);
                     newf0 = *previousP;
                 }
@@ -1093,11 +1093,11 @@ cuddSwapInPlace(
             newykeys++;
             previousP = &(ylist[posn]);
             tmp = *previousP;
-            while (newf1 < cuddT(tmp)) {
+            while (cuddF2L(newf1) < cuddF2L(cuddT(tmp))) {
                 previousP = &(tmp->next);
                 tmp = *previousP;
             }
-            while (newf1 == cuddT(tmp) && newf0 < cuddE(tmp)) {
+            while (newf1 == cuddT(tmp) && cuddF2L(newf0) < cuddF2L(cuddE(tmp))) {
                 previousP = &(tmp->next);
                 tmp = *previousP;
             }
@@ -1325,11 +1325,11 @@ ddUniqueCompare(
   int * ptrX,
   int * ptrY)
 {
-#if 0
+//#if 0
     if (entry[*ptrY] == entry[*ptrX]) {
         return((*ptrX) - (*ptrY));
     }
-#endif
+//#endif
     return(entry[*ptrY] - entry[*ptrX]);
 
 } /* end of ddUniqueCompare */
@@ -2140,4 +2140,3 @@ ddCheckPermuation(
 
 
 ABC_NAMESPACE_IMPL_END
-

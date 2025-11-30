@@ -381,6 +381,7 @@ struct DdManager {      /* specialized DD symbol table */
 //    double allocated;           /* number of nodes allocated */
     ABC_INT64_T allocated;      /* number of nodes allocated */
                                 /* (not during reordering) */
+    ABC_INT64_T allocated2;     /* number of nodes allocated */
     double reclaimed;           /* number of nodes brought back from the dead */
     int isolated;               /* isolated projection functions */
     int *perm;                  /* current variable perm. (index to level) */
@@ -715,7 +716,7 @@ typedef struct DdLevelQueue {
   SeeAlso     []
 
 ******************************************************************************/
-#define cuddF2L(f) ((Cudd_Regular(f)->Id << 1) | Cudd_IsComplement(f))
+#define cuddF2L(f) ((Cudd_Regular(f)) ? ((Cudd_Regular(f)->Id << 1) | Cudd_IsComplement(f)) : 0)
 
 
 /**Macro***********************************************************************

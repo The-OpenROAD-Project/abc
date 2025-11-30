@@ -54,7 +54,9 @@ static Abc_Frame_t * s_GlobalFrame = NULL;
 ***********************************************************************/
 Vec_Ptr_t * Abc_FrameReadStore()                             { return s_GlobalFrame->vStore;       } 
 int         Abc_FrameReadStoreSize()                         { return Vec_PtrSize(s_GlobalFrame->vStore); }
-void *      Abc_FrameReadLibLut()                            { return s_GlobalFrame->pLibLut;      } 
+void *      Abc_FrameReadLibLut()                            { return s_GlobalFrame->pLibLut[0];   } 
+void *      Abc_FrameReadLibLutI( int i )                    { return s_GlobalFrame->pLibLut[i];   } 
+void *      Abc_FrameReadLibCell()                           { return s_GlobalFrame->pLibCell;   } 
 void *      Abc_FrameReadLibBox()                            { return s_GlobalFrame->pLibBox;      } 
 void *      Abc_FrameReadLibGen()                            { return s_GlobalFrame->pLibGen;      } 
 void *      Abc_FrameReadLibGen2()                           { return s_GlobalFrame->pLibGen2;     } 
@@ -90,7 +92,9 @@ void        Abc_FrameInputNdr( Abc_Frame_t * pAbc, void * pData ) { Ndr_Delete(s
 void *      Abc_FrameOutputNdr( Abc_Frame_t * pAbc )         { void * pData = s_GlobalFrame->pNdr; s_GlobalFrame->pNdr = NULL; return pData;             }  
 int *       Abc_FrameOutputNdrArray( Abc_Frame_t * pAbc )    { int * pArray = s_GlobalFrame->pNdrArray; s_GlobalFrame->pNdrArray = NULL; return pArray;  }
 
-void        Abc_FrameSetLibLut( void * pLib )                { s_GlobalFrame->pLibLut   = pLib;    } 
+void        Abc_FrameSetLibLut( void * pLib )                { s_GlobalFrame->pLibLut[0]= pLib;    } 
+void        Abc_FrameSetLibLutI( void * pLib, int i )        { s_GlobalFrame->pLibLut[i]= pLib;    } 
+void        Abc_FrameSetLibCell( void * pLib )               { s_GlobalFrame->pLibCell  = pLib;    } 
 void        Abc_FrameSetLibBox( void * pLib )                { s_GlobalFrame->pLibBox   = pLib;    } 
 void        Abc_FrameSetLibGen( void * pLib )                { s_GlobalFrame->pLibGen   = pLib;    } 
 void        Abc_FrameSetLibGen2( void * pLib )               { s_GlobalFrame->pLibGen2  = pLib;    } 
@@ -248,6 +252,7 @@ void Abc_FrameDeallocate( Abc_Frame_t * p )
     Vec_WecFreeP( &s_GlobalFrame->vJsonObjs );  
     Ndr_Delete( s_GlobalFrame->pNdr );
     ABC_FREE( s_GlobalFrame->pNdrArray );
+    Abc_FrameStoreStop( s_GlobalFrame );
 
     Gia_ManStopP( &p->pGiaMiniAig );
     Gia_ManStopP( &p->pGiaMiniLut );

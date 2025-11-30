@@ -451,19 +451,31 @@ void Tim_ManCreate( Tim_Man_t * p, void * pLib, Vec_Flt_t * vInArrs, Vec_Flt_t *
     // create arrival times
     if ( vInArrs )
     {
-        assert( Vec_FltSize(vInArrs) == Tim_ManPiNum(p) );
-        Tim_ManForEachPi( p, pObj, i )
-            pObj->timeArr = Vec_FltEntry(vInArrs, i);
-
+        if ( Vec_FltSize(vInArrs) == Tim_ManPiNum(p) ) {
+            Tim_ManForEachPi( p, pObj, i )
+                pObj->timeArr = Vec_FltEntry(vInArrs, i);
+        }
+        else if ( Vec_FltSize(vInArrs) == Tim_ManCiNum(p) ) {
+            Tim_ManForEachCi( p, pObj, i )
+                pObj->timeArr = Vec_FltEntry(vInArrs, i);
+        }
+        else assert( 0 );
     }
     // create required times
     if ( vOutReqs )
     {
         k = 0;
-        assert( Vec_FltSize(vOutReqs) == Tim_ManPoNum(p) );
-        Tim_ManForEachPo( p, pObj, i )
-            pObj->timeReq = Vec_FltEntry(vOutReqs, k++);
-        assert( k == Tim_ManPoNum(p) );
+        if ( Vec_FltSize(vOutReqs) == Tim_ManPoNum(p) ) {
+            Tim_ManForEachPo( p, pObj, i )
+                pObj->timeReq = Vec_FltEntry(vOutReqs, k++);
+            assert( k == Tim_ManPoNum(p) );
+        }
+        else if ( Vec_FltSize(vOutReqs) == Tim_ManCoNum(p) ) {
+            Tim_ManForEachCo( p, pObj, i )
+                pObj->timeReq = Vec_FltEntry(vOutReqs, k++);
+            assert( k == Tim_ManCoNum(p) );
+        }
+        else assert( 0 );
     }
 }
 
@@ -564,10 +576,10 @@ void Tim_ManPrint( Tim_Man_t * p )
     if ( Tim_ManBoxNum(p) > 0 )
     Tim_ManForEachBox( p, pBox, i )
     {
-        printf( "*** Box %5d :  I =%4d. O =%4d. I1 =%6d. O1 =%6d. Table =%4d\n", 
+        printf( "*** Box %5d :  I =%4d. O =%4d. I1 =%6d. O1 =%6d. Table =%4d. Copy = %d.\n", 
             i, pBox->nInputs, pBox->nOutputs, 
             Tim_ManBoxInputFirst(p, i), Tim_ManBoxOutputFirst(p, i), 
-            pBox->iDelayTable );
+            pBox->iDelayTable, pBox->iCopy );
 
         // print box inputs
         pPrev = Tim_ManBoxInput( p, pBox, 0 );
@@ -591,7 +603,7 @@ void Tim_ManPrint( Tim_Man_t * p )
             Tim_ManBoxForEachOutput( p, pBox, pObj, k )
                 printf( "box-out%3d :  arrival = %5.3f  required = %5.3f\n", k, pObj->timeArr, pObj->timeReq );
 
-        if ( i > 2 )
+        if ( i == 7 )
             break;
     }
 
@@ -611,6 +623,8 @@ void Tim_ManPrint( Tim_Man_t * p )
                     printf( "%5s", "-" );
                 else
                     printf( "%5.0f", pTable[3+j*TableX+k] );
+        if ( i == 7 )
+            break;
     }
     printf( "\n" );
 }

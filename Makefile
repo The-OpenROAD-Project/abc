@@ -8,10 +8,19 @@ MSG_PREFIX ?=
 ABCSRC ?= .
 VPATH = $(ABCSRC)
 
-$(info $(MSG_PREFIX)Using CC=$(CC))
-$(info $(MSG_PREFIX)Using CXX=$(CXX))
-$(info $(MSG_PREFIX)Using AR=$(AR))
-$(info $(MSG_PREFIX)Using LD=$(LD))
+# whether to print build options, tools, and echo commands while building
+ifdef ABC_MAKE_VERBOSE
+  VERBOSE=
+  abc_info = $(info $(1))
+else
+  VERBOSE=@
+  abc_info =
+endif
+
+$(call abc_info,$(MSG_PREFIX)Using CC=$(CC))
+$(call abc_info,$(MSG_PREFIX)Using CXX=$(CXX))
+$(call abc_info,$(MSG_PREFIX)Using AR=$(AR))
+$(call abc_info,$(MSG_PREFIX)Using LD=$(LD))
 
 PROG := abc
 OS := $(shell uname -s)
@@ -26,9 +35,9 @@ MODULES := \
 	src/misc/vec src/misc/hash src/misc/tim src/misc/bzlib src/misc/zlib \
 	src/misc/mem src/misc/bar src/misc/bbl src/misc/parse \
 	src/opt/cut src/opt/fxu src/opt/fxch src/opt/rwr src/opt/mfs src/opt/sim \
-	src/opt/ret src/opt/fret src/opt/res src/opt/lpk src/opt/nwk src/opt/rwt \
-	src/opt/cgt src/opt/csw src/opt/dar src/opt/dau src/opt/dsc src/opt/sfm src/opt/sbd \
-	src/sat/bsat src/sat/xsat src/sat/satoko src/sat/csat src/sat/msat src/sat/psat src/sat/cnf src/sat/bmc src/sat/glucose src/sat/glucose2 \
+	src/opt/ret src/opt/fret src/opt/res src/opt/lpk src/opt/nwk src/opt/rwt src/opt/rar \
+	src/opt/cgt src/opt/csw src/opt/dar src/opt/dau src/opt/dsc src/opt/sfm src/opt/sbd src/opt/eslim \
+	src/sat/bsat src/sat/xsat src/sat/satoko src/sat/csat src/sat/msat src/sat/psat src/sat/cnf src/sat/bmc src/sat/glucose src/sat/glucose2 src/sat/kissat src/sat/cadical \
 	src/bool/bdc src/bool/deco src/bool/dec src/bool/kit src/bool/lucky \
 	src/bool/rsb src/bool/rpo \
 	src/proof/pdr src/proof/abs src/proof/live src/proof/ssc src/proof/int \
@@ -67,14 +76,14 @@ endif
 ifdef ABC_USE_NAMESPACE
   CFLAGS += -DABC_NAMESPACE=$(ABC_USE_NAMESPACE) -fpermissive -x c++
   CC := $(CXX)
-  $(info $(MSG_PREFIX)Compiling in namespace $(ABC_NAMESPACE))
+  $(call abc_info,$(MSG_PREFIX)Compiling in namespace $(ABC_USE_NAMESPACE))
 endif
 
 # compile CUDD with ABC
 ifndef ABC_USE_NO_CUDD
   CFLAGS += -DABC_USE_CUDD=1
   MODULES += src/bdd/cudd src/bdd/extrab src/bdd/dsd src/bdd/epd src/bdd/mtr src/bdd/reo src/bdd/cas src/bdd/bbr src/bdd/llb
-  $(info $(MSG_PREFIX)Compiling with CUDD)
+  $(call abc_info,$(MSG_PREFIX)Compiling with CUDD)
 endif
 
 ABC_READLINE_INCLUDES ?=
@@ -88,28 +97,21 @@ ifndef ABC_USE_NO_READLINE
     CFLAGS += -I/usr/local/include
     LDFLAGS += -L/usr/local/lib
   endif
-  $(info $(MSG_PREFIX)Using libreadline)
+  $(call abc_info,$(MSG_PREFIX)Using libreadline)
 endif
 
 # whether to compile with thread support
 ifndef ABC_USE_NO_PTHREADS
   CFLAGS += -DABC_USE_PTHREADS
   LIBS += -lpthread
-  $(info $(MSG_PREFIX)Using pthreads)
+  $(call abc_info,$(MSG_PREFIX)Using pthreads)
 endif
 
 # whether to compile into position independent code
 ifdef ABC_USE_PIC
   CFLAGS += -fPIC
   LIBS += -fPIC
-  $(info $(MSG_PREFIX)Compiling position independent code)
-endif
-
-# whether to echo commands while building
-ifdef ABC_MAKE_VERBOSE
-  VERBOSE=
-else
-  VERBOSE=@
+  $(call abc_info,$(MSG_PREFIX)Compiling position independent code)
 endif
 
 # Set -Wno-unused-bug-set-variable for GCC 4.6.0 and greater only
@@ -121,16 +123,16 @@ GCC_VERSION=$(shell $(CC) -dumpversion)
 GCC_MAJOR=$(word 1,$(subst .,$(space),$(GCC_VERSION)))
 GCC_MINOR=$(word 2,$(subst .,$(space),$(GCC_VERSION)))
 
-$(info $(MSG_PREFIX)Found GCC_VERSION $(GCC_VERSION))
+$(call abc_info,$(MSG_PREFIX)Found GCC_VERSION $(GCC_VERSION))
 ifeq ($(findstring $(GCC_MAJOR),0 1 2 3),)
 ifeq ($(GCC_MAJOR),4)
-$(info $(MSG_PREFIX)Found GCC_MAJOR==4)
+$(call abc_info,$(MSG_PREFIX)Found GCC_MAJOR==4)
 ifeq ($(findstring $(GCC_MINOR),0 1 2 3 4 5),)
-$(info $(MSG_PREFIX)Found GCC_MINOR>=6)
+$(call abc_info,$(MSG_PREFIX)Found GCC_MINOR>=6)
 CFLAGS += -Wno-unused-but-set-variable
 endif
 else
-$(info $(MSG_PREFIX)Found GCC_MAJOR>=5)
+$(call abc_info,$(MSG_PREFIX)Found GCC_MAJOR>=5)
 CFLAGS += -Wno-unused-but-set-variable
 endif
 endif
@@ -149,10 +151,10 @@ endif
 
 ifdef ABC_USE_LIBSTDCXX
    LIBS += -lstdc++
-   $(info $(MSG_PREFIX)Using explicit -lstdc++)
+   $(call abc_info,$(MSG_PREFIX)Using explicit -lstdc++)
 endif
 
-$(info $(MSG_PREFIX)Using CFLAGS=$(CFLAGS))
+$(call abc_info,$(MSG_PREFIX)Using CFLAGS=$(CFLAGS))
 CXXFLAGS += $(CFLAGS) -std=c++17 -fno-exceptions
 
 SRC  :=

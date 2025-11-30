@@ -1083,7 +1083,7 @@ void Abc_NtkPrintMffc( FILE * pFile, Abc_Ntk_t * pNtk )
     int i;
     extern void Abc_NodeMffcConeSuppPrint( Abc_Obj_t * pNode );
     Abc_NtkForEachNode( pNtk, pNode, i )
-        if ( Abc_ObjFanoutNum(pNode) > 1 )
+        if ( Abc_ObjFanoutNum(pNode) > 1 || (Abc_ObjFanoutNum(pNode) == 1 && Abc_ObjIsCo(Abc_ObjFanout0(pNode))))
             Abc_NodeMffcConeSuppPrint( pNode );
 }
 
@@ -1547,6 +1547,24 @@ void Abc_NtkPrintGates( Abc_Ntk_t * pNtk, int fUseLibrary, int fUpdateProfile )
     // convert the network back into BDDs if this is how it was
     if ( fHasBdds )
         Abc_NtkSopToBdd(pNtk);
+}
+void Abc_NtkPrintGates2( Abc_Ntk_t * pNtk )
+{
+    Abc_Obj_t * pNode; int n, nFaninMax = Abc_NtkGetFaninMax(pNtk);
+    Abc_NtkForEachNode( pNtk, pNode, n ) 
+    {
+        if ( Abc_ObjFaninNum(pNode) < 2 )
+            continue;
+        word uTruth = Mio_GateReadTruth((Mio_Gate_t *)pNode->pData);
+        printf( "Node %d : ", Abc_ObjId(pNode) );
+        printf( "Fanins %d : ", Abc_ObjFaninNum(pNode) );
+        printf( "Gate %10s : ", Mio_GateReadName((Mio_Gate_t *)pNode->pData) );
+        printf( "Func " );
+        for ( int i = 0; i < (1 << nFaninMax)-(1 << Abc_ObjFaninNum(pNode)); i++ )
+            printf( " " );
+        Extra_PrintBinary( stdout, (unsigned *)&uTruth, 1 << Abc_ObjFaninNum(pNode) );
+        printf( "\n" );        
+    }
 }
 
 /**Function*************************************************************

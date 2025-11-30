@@ -25,6 +25,7 @@
 #include <fnmatch.h>
 #endif
 
+#include "misc/zlib/zlib.h"
 #include "sclLib.h"
 #include "misc/st/st.h"
 #include "map/mio/mio.h"
@@ -552,14 +553,59 @@ long Scl_LibertyFileSize( char * pFileName )
     fclose( pFile );
     return nFileSize;
 }
-char * Scl_LibertyFileContents( char * pFileName, long nContents )
+
+static char * Io_LibLoadFileGz( char * pFileName, long * pnFileSize )
 {
-    FILE * pFile = fopen( pFileName, "rb" );
-    char * pContents = ABC_ALLOC( char, nContents+1 );
-    long RetValue = 0;
-    RetValue = fread( pContents, nContents, 1, pFile );
-    fclose( pFile );
-    pContents[nContents] = 0;
+    const int READ_BLOCK_SIZE = 100000;
+    gzFile pFile;
+    char * pContents;
+    long amtRead, readBlock, nFileSize = READ_BLOCK_SIZE;
+    pFile = gzopen( pFileName, "rb" ); // if pFileName doesn't end in ".gz" then this acts as a passthrough to fopen
+    pContents = ABC_ALLOC( char, nFileSize );
+    readBlock = 0;
+    while ((amtRead = gzread(pFile, pContents + readBlock * READ_BLOCK_SIZE, READ_BLOCK_SIZE)) == READ_BLOCK_SIZE) {
+        //Abc_Print( 1,"%d: read %d bytes\n", readBlock, amtRead);
+        nFileSize += READ_BLOCK_SIZE;
+        pContents = ABC_REALLOC(char, pContents, nFileSize);
+        ++readBlock;
+    }
+    //Abc_Print( 1,"%d: read %d bytes\n", readBlock, amtRead);
+    assert( amtRead != -1 ); // indicates a zlib error
+    nFileSize -= (READ_BLOCK_SIZE - amtRead);
+    gzclose(pFile);
+    *pnFileSize = nFileSize;
+    return pContents;
+}
+
+char * Scl_LibertyFileContents( char * pFileName, long * nContents )
+{
+    char * pContents = NULL;
+    //if file ends in ".gz" then use gzopen
+    if ( !strncmp(pFileName+strlen(pFileName)-3,".gz", 3) )
+    {
+        FILE * pFile = fopen( pFileName, "rb" );
+        //char * pContents;
+        long RetValue = 0;
+        pContents = Io_LibLoadFileGz(  pFileName, nContents );
+        if(pContents == NULL) {
+            printf( "Scl_LibertyFileContents(): The input file is unavailable (absent or open).\n" );
+            return NULL;
+        }
+        else {
+            RetValue = 1;
+        }
+        fclose( pFile );
+    }
+    // original .lib file
+    else
+    {
+        FILE * pFile = fopen( pFileName, "rb" );
+        pContents = ABC_ALLOC( char, *nContents+1 );
+        long RetValue = 0;
+        RetValue = fread( pContents, *nContents, 1, pFile );
+        fclose( pFile );
+        pContents[*nContents] = 0;
+    }
     return pContents;
 }
 void Scl_LibertyStringDump( char * pFileName, Vec_Str_t * vStr )
@@ -600,7 +646,7 @@ Scl_Tree_t * Scl_LibertyStart( char * pFileName )
     memset( p, 0, sizeof(Scl_Tree_t) );
     p->clkStart  = Abc_Clock();
     p->nContents = RetValue;
-    p->pContents = Scl_LibertyFileContents( pFileName, p->nContents );
+    p->pContents = Scl_LibertyFileContents( pFileName, &p->nContents );
     // other 
     p->pFileName = Abc_UtilStrsav( pFileName );
     p->nItermAlloc = 10 + Scl_LibertyCountItems( p->pContents, p->pContents+p->nContents );
@@ -895,11 +941,16 @@ void Scl_LibertyReadLoadUnit( Scl_Tree_t * p, Vec_Str_t * vOut )
         char * pHead   = Scl_LibertyReadString(p, pItem->Head);
         float First    = atof(strtok(pHead, " \t\n\r\\\","));
         char * pSecond = strtok(NULL, " \t\n\r\\\",");
-        Vec_StrPutF_( vOut, First );
-        if ( pSecond && !strcmp(pSecond, "pf") )
+        if ( pSecond && (!strcmp(pSecond, "pf") || !strcmp(pSecond, "pF")) )
+        {
+            Vec_StrPutF_( vOut, First );
             Vec_StrPutI_( vOut, 12 );
-        else if ( pSecond && !strcmp(pSecond, "ff") )
+        }
+        else if ( pSecond && (!strcmp(pSecond, "ff") || !strcmp(pSecond, "fF")) )
+        {
+            Vec_StrPutF_( vOut, First );
             Vec_StrPutI_( vOut, 15 );
+        }
         else break;
         return;
     }
@@ -1454,7 +1505,7 @@ Vec_Ptr_t * Scl_LibertyReadTemplates( Scl_Tree_t * p )
 //    Scl_LibertyPrintTemplates( vRes );
     return vRes;
 }
-Vec_Str_t * Scl_LibertyReadSclStr( Scl_Tree_t * p, int fVerbose, int fVeryVerbose, SC_DontUse dont_use )
+Vec_Str_t * Scl_LibertyReadSclStr( Scl_Tree_t * p, int fVerbose, int fVeryVerbose, SC_DontUse dont_use, int fSkipMultiOuts )
 {
     int fUseFirstTable = 0;
     Vec_Str_t * vOut;
@@ -1463,7 +1514,7 @@ Vec_Str_t * Scl_LibertyReadSclStr( Scl_Tree_t * p, int fVerbose, int fVeryVerbos
     Vec_Wrd_t * vTruth;
     char * pFormula, * pName;
     int i, k, Counter, nOutputs, nCells;
-    int nSkipped[4] = {0};
+    int nSkipped[6] = {0};
 
     // read delay-table templates
     vTemples = Scl_LibertyReadTemplates( p );
@@ -1515,6 +1566,18 @@ Vec_Str_t * Scl_LibertyReadSclStr( Scl_Tree_t * p, int fVerbose, int fVeryVerbos
             nSkipped[2]++;
             continue;
         }
+        if ( Counter > 2 )
+        {
+            if ( fVeryVerbose )  printf( "Scl_LibertyReadGenlib() skipped cell \"%s\" with more than two outputs.\n", Scl_LibertyReadString(p, pCell->Head) );
+            nSkipped[4]++;
+            continue;
+        }
+        if ( fSkipMultiOuts && Counter > 1 )
+        {
+            if ( fVeryVerbose )  printf( "Scl_LibertyReadGenlib() skipped cell \"%s\" with two outputs.\n", Scl_LibertyReadString(p, pCell->Head) );
+            nSkipped[5]++;
+            continue;
+        }
         nCells++;
     }
     // read cells
@@ -1530,6 +1593,10 @@ Vec_Str_t * Scl_LibertyReadSclStr( Scl_Tree_t * p, int fVerbose, int fVeryVerbos
         if ( Scl_LibertyReadCellIsThreeState(p, pCell) )
             continue;
         if ( (Counter = Scl_LibertyReadCellOutputNum(p, pCell)) == 0 )
+            continue;
+        if ( Counter > 2 )
+            continue;
+        if ( fSkipMultiOuts && Counter > 1 )
             continue;
         // top level information
         Vec_StrPutS_( vOut, Scl_LibertyReadString(p, pCell->Head) );
@@ -1696,13 +1763,14 @@ Vec_Str_t * Scl_LibertyReadSclStr( Scl_Tree_t * p, int fVerbose, int fVeryVerbos
     {
         printf( "Library \"%s\" from \"%s\" has %d cells ", 
             Scl_LibertyReadString(p, Scl_LibertyRoot(p)->Head), p->pFileName, nCells );
-        printf( "(%d skipped: %d seq; %d tri-state; %d no func; %d dont_use).  ", 
-            nSkipped[0]+nSkipped[1]+nSkipped[2], nSkipped[0], nSkipped[1], nSkipped[2], nSkipped[3] );
+        printf( "(%d skipped: %d seq; %d tri-state; %d no func; %d dont_use; %d with 2 outputs; %d with 3+ outputs).  ", 
+            nSkipped[0]+nSkipped[1]+nSkipped[2]+nSkipped[3]+nSkipped[4]+nSkipped[5], 
+            nSkipped[0],nSkipped[1],nSkipped[2],nSkipped[3],nSkipped[5],nSkipped[4] );
         Abc_PrintTime( 1, "Time", Abc_Clock() - p->clkStart );
     }
     return vOut;
 }
-SC_Lib * Abc_SclReadLiberty( char * pFileName, int fVerbose, int fVeryVerbose, SC_DontUse dont_use )
+SC_Lib * Abc_SclReadLiberty( char * pFileName, int fVerbose, int fVeryVerbose, SC_DontUse dont_use, int fSkipMultiOuts )
 {
     SC_Lib * pLib;
     Scl_Tree_t * p;
@@ -1712,7 +1780,7 @@ SC_Lib * Abc_SclReadLiberty( char * pFileName, int fVerbose, int fVeryVerbose, S
         return NULL;
 //    Scl_LibertyParseDump( p, "temp_.lib" );
     // collect relevant data
-    vStr = Scl_LibertyReadSclStr( p, fVerbose, fVeryVerbose, dont_use );
+    vStr = Scl_LibertyReadSclStr( p, fVerbose, fVeryVerbose, dont_use, fSkipMultiOuts );
     Scl_LibertyStop( p, fVeryVerbose );
     if ( vStr == NULL )
         return NULL;
@@ -1751,7 +1819,7 @@ void Scl_LibertyTest()
         return;
 //    Scl_LibertyParseDump( p, "temp_.lib" );
     SC_DontUse dont_use = {0};
-    vStr = Scl_LibertyReadSclStr( p, fVerbose, fVeryVerbose, dont_use);
+    vStr = Scl_LibertyReadSclStr( p, fVerbose, fVeryVerbose, dont_use, 0);
     Scl_LibertyStringDump( "test_scl.lib", vStr );
     Vec_StrFree( vStr );
     Scl_LibertyStop( p, fVerbose );

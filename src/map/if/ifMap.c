@@ -483,6 +483,10 @@ void If_ObjPerformMappingAnd( If_Man_t * p, If_Obj_t * pObj, int Mode, int fPrep
         if ( p->pPars->fUserRecLib || p->pPars->fUserSesLib )
             assert(If_ObjCutBest(pObj)->Cost < IF_COST_MAX && If_ObjCutBest(pObj)->Delay < ABC_INFINITY);
     }
+    if ( p->vCuts ) {
+        extern void If_ManDumpCutsAndCost( If_Man_t * p, If_Obj_t * pObj, Vec_Int_t * vCuts, Vec_Int_t * vCutCosts );
+        If_ManDumpCutsAndCost( p, pObj, p->vCuts, p->vCutCosts );
+    }
     // add the trivial cut to the set
     if ( !pObj->fSkipCut && If_ObjCutBest(pObj)->nLeaves > 1 )
     {
