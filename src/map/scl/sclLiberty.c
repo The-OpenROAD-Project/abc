@@ -1818,7 +1818,7 @@ void Scl_LibertyTest()
     if ( p == NULL )
         return;
 //    Scl_LibertyParseDump( p, "temp_.lib" );
-    SC_DontUse dont_use = {0};
+    SC_DontUse dont_use = {0, 0};
     vStr = Scl_LibertyReadSclStr( p, fVerbose, fVeryVerbose, dont_use, 0);
     Scl_LibertyStringDump( "test_scl.lib", vStr );
     Vec_StrFree( vStr );

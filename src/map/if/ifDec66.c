@@ -275,7 +275,7 @@ unsigned * If_CluHashLookup2( If_Man_t * p, word * pTruth, int t )
 // returns if successful
 int If_CluCheckXX( If_Man_t * p, word * pTruth0, int lutSize, int nVars, int fHashing )
 {
-    If_Grp_t G1 = {0};
+    If_Grp_t G1 = {0, 0, {0}};
     unsigned * pHashed = NULL;
 
     if ( p && fHashing )

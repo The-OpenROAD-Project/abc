@@ -521,7 +521,9 @@ void Amap_ManMatchNode( Amap_Man_t * p, Amap_Obj_t * pNode, int fFlow, int fRefs
     int fVerbose = 0; //(pNode->Level == 2 || pNode->Level == 4);
     int fVeryVerbose = fVerbose;
 
-    Amap_Mat_t MA = {0}, MD = {0}, M = {0};
+    Amap_Mat_t MA = {0, 0, 0, 0, 0},
+      MD = {0, 0, 0, 0, 0},
+      M = {0, 0, 0, 0, 0};
     Amap_Mat_t * pMBestA = &MA, * pMBestD = &MD, * pMThis = &M, * pMBest;
     Amap_Cut_t * pCut;
     Amap_Set_t * pSet;

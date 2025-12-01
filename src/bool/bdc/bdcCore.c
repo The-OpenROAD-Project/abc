@@ -344,7 +344,7 @@ void Bdc_ManDecomposeTest( unsigned uTruth, int nVars )
 {
     static int Counter = 0;
     static int Total = 0;
-    Bdc_Par_t Pars = {0}, * pPars = &Pars;
+    Bdc_Par_t Pars = {0, 0, 0}, * pPars = &Pars;
     Bdc_Man_t * p;
     int RetValue;
 //    unsigned uCare = ~0x888f888f;
@@ -379,7 +379,7 @@ int Bdc_ManBidecNodeNum( word * pFunc, word * pCare, int nVars, int fVerbose )
 {
     int nNodes;
     Bdc_Man_t * pManDec;
-    Bdc_Par_t Pars = {0}, * pPars = &Pars;
+    Bdc_Par_t Pars = {0, 0, 0}, * pPars = &Pars;
     pPars->nVarsMax = nVars;
     pManDec = Bdc_ManAlloc( pPars );
     Bdc_ManDecompose( pManDec, (unsigned *)pFunc, (unsigned *)pCare, nVars, NULL, 1000 );
@@ -428,7 +428,7 @@ Vec_Int_t * Bdc_ManBidecResub( word * pFunc, word * pCare, int nVars )
     Vec_Int_t * vRes = NULL;
     int nNodes;
     Bdc_Man_t * pManDec; 
-    Bdc_Par_t Pars = {0}, * pPars = &Pars;
+    Bdc_Par_t Pars = {0, 0, 0}, * pPars = &Pars;
     pPars->nVarsMax = nVars;
     pManDec = Bdc_ManAlloc( pPars );
     Bdc_ManDecompose( pManDec, (unsigned *)pFunc, (unsigned *)pCare, nVars, NULL, 1000 );

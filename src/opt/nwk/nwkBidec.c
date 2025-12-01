@@ -128,7 +128,7 @@ Hop_Obj_t * Nwk_NodeIfNodeResyn( Bdc_Man_t * p, Hop_Man_t * pHop, Hop_Obj_t * pR
 ***********************************************************************/
 void Nwk_ManBidecResyn( Nwk_Man_t * pNtk, int fVerbose )
 {
-    Bdc_Par_t Pars = {0}, * pPars = &Pars;
+    Bdc_Par_t Pars = {0, 0, 0}, * pPars = &Pars;
     Bdc_Man_t * p;
     Nwk_Obj_t * pObj;
     Vec_Int_t * vTruth;

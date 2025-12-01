@@ -77,7 +77,7 @@ int Abc_NtkCompareAndSaveBest( Abc_Ntk_t * pNtk )
         int    Edges;  // edges in the best saved network
         int    nPis;   // the number of primary inputs
         int    nPos;   // the number of primary outputs
-    } ParsNew, ParsBest = { 0 };
+    } ParsNew, ParsBest = { 0, 0, 0, 0, 0, 0, 0 };
     char * pFileNameOut;
     // free storage for the name
     if ( pNtk == NULL )

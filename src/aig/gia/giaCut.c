@@ -1078,7 +1078,7 @@ int Gia_ManCountSelfCuts( Gia_Man_t * p, Gia_Sto_t * pSto )
 void Gia_ManEvalCutHashing( Gia_Man_t * p, Gia_Sto_t * pSto )
 {
     Hsh_VecMan_t * pHash = Hsh_VecManStart( 100000 );
-    Vec_Int_t vTemp = {0};
+    Vec_Int_t vTemp = {0, 0, nullptr};
     Vec_Int_t * vLevel; int i, k, * pCut, nBytes = 0, nCuts = 0;
     Vec_WecForEachLevel( pSto->vCuts, vLevel, i ) if ( Vec_IntSize(vLevel) ) {
         Gia_Obj_t * pObj = Gia_ManObj(p, i);

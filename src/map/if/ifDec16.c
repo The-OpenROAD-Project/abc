@@ -1111,7 +1111,7 @@ int If_CluDetectSpecialCaseCofs( word * pF, int nVars, int iVar )
 // returns 1 if we have special case of cofactors; otherwise, returns 0
 If_Grp_t If_CluDecUsingCofs( word * pTruth, int nVars, int nLutLeaf )
 {
-    If_Grp_t G = {0};
+    If_Grp_t G = {0, 0, {0}};
     word pF2[CLU_WRD_MAX], * pF = pF2;
     int Var2Pla[CLU_VAR_MAX+2], Pla2Var[CLU_VAR_MAX+2];
     int V2P[CLU_VAR_MAX+2], P2V[CLU_VAR_MAX+2];
@@ -1307,7 +1307,7 @@ If_Grp_t If_CluFindGroup( word * pF, int nVars, int iVarStart, int iVarStop, int
 {
     int fVerbose = 0;
     int nRounds = 2;//nBSsize;
-    If_Grp_t G = {0}, * g = &G;//, BestG = {0};
+    If_Grp_t G = {0, 0, {0}}, * g = &G;//, BestG = {0};
     int i, r, v, nCofs, VarBest, nCofsBest2;
     assert( nVars > nBSsize && nVars >= nBSsize + iVarStart && nVars <= CLU_VAR_MAX );
     assert( nBSsize >= 2 && nBSsize <= 6 );
@@ -1554,7 +1554,7 @@ If_Grp_t If_CluCheck( If_Man_t * p, word * pTruth0, int nVars, int iVarStart, in
                      If_Grp_t * pR, word * pFunc0, word * pFunc1, word * pLeftOver, int fHashing )
 {
 //    int fEnableHashing = 0;
-    If_Grp_t G1 = {0}, R = {0};
+  If_Grp_t G1 = {0, 0, {0}}, R = {0, 0, {0}};
     unsigned * pHashed = NULL;
     word Truth, pTruth[CLU_WRD_MAX], pF[CLU_WRD_MAX];//, pG[CLU_WRD_MAX];
     int V2P[CLU_VAR_MAX+2], P2V[CLU_VAR_MAX+2], pCanonPerm[CLU_VAR_MAX];
@@ -1913,7 +1913,10 @@ If_Grp_t If_CluCheck3( If_Man_t * p, word * pTruth0, int nVars, int nLutLeaf, in
     static int Counter = 0;
     unsigned * pHashed = NULL;
     word pLeftOver[CLU_WRD_MAX], Func0, Func1, Func2;
-    If_Grp_t G1 = {0}, G2 = {0}, R = {0}, R2 = {0};
+    If_Grp_t G1 = {0, 0, {0}},
+      G2 = {0, 0, {0}},
+      R = {0, 0, {0}},
+      R2 = {0, 0, {0}};
     int i;
     Counter++;
 //    if ( Counter == 37590 )
@@ -2105,7 +2108,9 @@ float If_CutDelayLutStruct( If_Man_t * p, If_Cut_t * pCut, char * pStr, float Wi
     float Delays[CLU_VAR_MAX+2];
     int fUsed[CLU_VAR_MAX+2] = {0};
     If_Obj_t * pLeaf;
-    If_Grp_t G1 = {0}, G2 = {0}, G3 = {0};
+    If_Grp_t G1 = {0, 0, {0}},
+      G2 = {0, 0, {0}}, \
+      G3 = {0, 0, {0}};
     int nLeaves = If_CutLeaveNum(pCut);
     int i, nLutLeaf, nLutRoot;
     // mark the cut as user cut
@@ -2216,7 +2221,7 @@ int If_TtMemCutNum2() { return Vec_MemEntryNum(s_vTtMem2); }
 int If_CutPerformCheck16( If_Man_t * p, unsigned * pTruth0, int nVars, int nLeaves, char * pStr )
 {
     unsigned pTruth[IF_MAX_FUNC_LUTSIZE > 5 ? 1 << (IF_MAX_FUNC_LUTSIZE - 5) : 1];
-    If_Grp_t G1 = {0};//, G3 = {0};
+    If_Grp_t G1 = {0, 0, {0}};//, G3 = {0};
     int i, nLutLeaf, nLutLeaf2, nLutRoot, Length;
     // stretch the truth table
     assert( nVars >= 6 );

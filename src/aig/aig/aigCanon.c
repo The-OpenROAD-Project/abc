@@ -98,7 +98,7 @@ static Aig_RMan_t * s_pRMan = NULL;
 ***********************************************************************/
 Aig_RMan_t * Aig_RManStart()
 {
-    static Bdc_Par_t Pars = {0}, * pPars = &Pars;
+  static Bdc_Par_t Pars = {0, 0, 0}, * pPars = &Pars;
     Aig_RMan_t * p;
     p = ABC_ALLOC( Aig_RMan_t, 1 );
     memset( p, 0, sizeof(Aig_RMan_t) );

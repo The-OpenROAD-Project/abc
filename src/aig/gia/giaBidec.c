@@ -233,7 +233,7 @@ if ( Kit_TruthSupportSize(pTruth, nVars) != nVars )
 Gia_Man_t * Gia_ManPerformBidec( Gia_Man_t * p, int fVerbose )
 {
     Bdc_Man_t * pManDec;
-    Bdc_Par_t Pars = {0}, * pPars = &Pars;
+    Bdc_Par_t Pars = {0, 0, 0}, * pPars = &Pars;
     Vec_Int_t * vLeaves, * vTruth, * vVisited;
     Gia_Man_t * pNew, * pTemp;
     Gia_Obj_t * pObj;

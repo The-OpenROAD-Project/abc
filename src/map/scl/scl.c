@@ -188,7 +188,7 @@ int Scl_CommandReadLib( Abc_Frame_t * pAbc, int argc, char ** argv )
     int fUseAll = 0;
     int fSkipMultiOuts = 0;
     
-    SC_DontUse dont_use = {0};
+    SC_DontUse dont_use = {0, 0};
     dont_use.dont_use_list = ABC_ALLOC(char *, argc);
     dont_use.size = 0;
 

@@ -211,13 +211,13 @@ Aig_Man_t *introduceAbsorberLogic( Aig_Man_t *pAig, int *pLiveIndex_0, int *pLiv
     //****************************************************************
     // Step 2: map constant nodes
     //****************************************************************
-        pObj = Aig_ManConst1( pAig );
-        pObj->pData = Aig_ManConst1( pNewAig );
+    pObj = Aig_ManConst1( pAig );
+    pObj->pData = Aig_ManConst1( pNewAig );
 
     //****************************************************************
         // Step 3: create true PIs
     //****************************************************************
-        Saig_ManForEachPi( pAig, pObj, i )
+    Saig_ManForEachPi( pAig, pObj, i )
     {
         piCopied++;
         pObj->pData = Aig_ObjCreateCi(pNewAig);
@@ -226,11 +226,11 @@ Aig_Man_t *introduceAbsorberLogic( Aig_Man_t *pAig, int *pLiveIndex_0, int *pLiv
     //****************************************************************
     // Step 5: create register outputs
     //****************************************************************
-        Saig_ManForEachLo( pAig, pObj, i )
-        {
-        loCopied++;
-        pObj->pData = Aig_ObjCreateCi(pNewAig);
-        }
+    Saig_ManForEachLo( pAig, pObj, i )
+    {
+      loCopied++;
+      pObj->pData = Aig_ObjCreateCi(pNewAig);
+    }
 
     //****************************************************************
     // Step 6: create "D" register output for the ABSORBER logic

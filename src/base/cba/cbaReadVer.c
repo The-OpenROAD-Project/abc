@@ -104,7 +104,7 @@ static const Prs_VerPrim_t s_VerilogPrims[16] =
     {CBA_BOX_XOR,  "xor"   },   
     {CBA_BOX_XNOR, "xnor"  },  
     {CBA_BOX_TRI,  "bufif1"},  
-    {0}
+    {0, ""}
 };
 
 // predefined operator names

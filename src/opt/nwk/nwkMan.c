@@ -129,7 +129,7 @@ int Nwk_ManCompareAndSaveBest( Nwk_Man_t * pNtk, void * pNtl )
         int    Nodes;  // nodes in the best saved network
         int    nPis;   // the number of primary inputs
         int    nPos;   // the number of primary outputs
-    } ParsNew, ParsBest = { 0 };
+    } ParsNew, ParsBest = { 0, 0, 0, 0, 0, 0 };
     // free storage for the name
     if ( pNtk == NULL )
     {

@@ -389,7 +389,7 @@ int Abc_NtkMfs( Abc_Ntk_t * pNtk, Mfs_Par_t * pPars )
 {
     extern Aig_Man_t * Abc_NtkToDar( Abc_Ntk_t * pNtk, int fExors, int fRegisters );
 
-    Bdc_Par_t Pars = {0}, * pDecPars = &Pars;
+    Bdc_Par_t Pars = {0, 0, 0}, * pDecPars = &Pars;
     ProgressBar * pProgress;
     Mfs_Man_t * p;
     Abc_Obj_t * pObj;

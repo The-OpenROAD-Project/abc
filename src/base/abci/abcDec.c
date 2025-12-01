@@ -628,7 +628,7 @@ void Abc_TruthDecPerform( Abc_TtStore_t * p, int DecType, int fVerbose )
     {
         // perform bi-decomposition and count AIG nodes
         Bdc_Man_t * pManDec;
-        Bdc_Par_t Pars = {0}, * pPars = &Pars;
+        Bdc_Par_t Pars = {0, 0, 0}, * pPars = &Pars;
         pPars->nVarsMax = p->nVars;
         pManDec = Bdc_ManAlloc( pPars );
         for ( i = 0; i < p->nFuncs; i++ )
