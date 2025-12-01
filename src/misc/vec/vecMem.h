@@ -436,7 +436,8 @@ static inline Vec_Mem_t * Vec_MemAllocWithTTs( int nVars )
     Vec_Mem_t * vTtMem = Vec_MemAllocForTTSimple( nVars );
     int i, k, nWords = nVars <= 6 ? 1 : (1 << (nVars - 6));
     word * pTruth = ABC_CALLOC( word, nWords );
-    int Value = Vec_MemHashInsert( vTtMem, pTruth ); assert( Value == 0 );
+    [[maybe_unused]] int Value = Vec_MemHashInsert( vTtMem, pTruth );
+    assert( Value == 0 );
     for ( i = 0; i < nVars; i++ ) {
         if ( i < 6 )
             for ( k = 0; k < nWords; k++ )
@@ -444,7 +445,8 @@ static inline Vec_Mem_t * Vec_MemAllocWithTTs( int nVars )
         else
             for ( k = 0; k < nWords; k++ )
                 pTruth[k] = (k & (1 << (i-6))) ? ~(word)0 : 0;
-        Value = Vec_MemHashInsert( vTtMem, pTruth ); assert( Value == 1+i );
+        Value = Vec_MemHashInsert( vTtMem, pTruth );
+        assert( Value == 1+i );
     }
     ABC_FREE( pTruth );
     return vTtMem;
