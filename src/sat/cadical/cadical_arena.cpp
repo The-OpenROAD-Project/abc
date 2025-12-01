@@ -7,7 +7,12 @@ ABC_NAMESPACE_IMPL_START
 namespace CaDiCaL {
 
 Arena::Arena (Internal *i) {
-  memset (this, 0, sizeof *this);
+  from.start = 0;
+  from.top = 0;
+  from.end= 0;
+  to.start = 0;
+  to.top = 0;
+  to.end= 0;
   internal = i;
 }
 

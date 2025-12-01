@@ -182,7 +182,7 @@ json_container_t* json_add_container(json_t *json) {
 
 // Parse a JSON string
 json_value_t json_parse_string(json_t *json, uint32_t *pos) {
-    json_value_t val = {0};
+    json_value_t val = {0, 0, JSON_NULL};
     val.type = JSON_STRING;
     val.offset = *pos;
     
@@ -200,7 +200,7 @@ json_value_t json_parse_string(json_t *json, uint32_t *pos) {
 
 // Parse a JSON number
 json_value_t json_parse_number(json_t *json, uint32_t *pos) {
-    json_value_t val = {0};
+    json_value_t val = {0, 0, JSON_NULL};
     val.type = JSON_NUMBER;
     val.offset = *pos;
     
@@ -220,7 +220,7 @@ json_value_t json_parse_number(json_t *json, uint32_t *pos) {
 
 // Parse a JSON object
 json_value_t json_parse_object(json_t *json, uint32_t *pos) {
-    json_value_t val = {0};
+    json_value_t val = {0, 0, JSON_NULL};
     val.type = JSON_OBJECT;
     val.offset = *pos;
     
@@ -275,7 +275,7 @@ json_value_t json_parse_object(json_t *json, uint32_t *pos) {
 
 // Parse a JSON array
 json_value_t json_parse_array(json_t *json, uint32_t *pos) {
-    json_value_t val = {0};
+    json_value_t val = {0, 0, JSON_NULL};
     val.type = JSON_ARRAY;
     val.offset = *pos;
     
@@ -322,7 +322,7 @@ json_value_t json_parse_array(json_t *json, uint32_t *pos) {
 
 // Parse any JSON value
 json_value_t json_parse_value(json_t *json, uint32_t *pos) {
-    json_value_t val = {0};
+    json_value_t val = {0, 0, JSON_NULL};
     
     json_skip_whitespace(json->str, pos, json->str_len);
     

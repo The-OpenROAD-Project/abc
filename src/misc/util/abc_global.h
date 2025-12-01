@@ -525,7 +525,7 @@ static inline void * Abc_FileReadContents( char * pFileName, int * pnFileSize )
     rewind( pFile );
     // load the contents of the file into memory
     pBuffer = ABC_ALLOC( char, nFileSize + 32 );
-    fread( pBuffer, 1, nFileSize, pFile );
+    (void) fread( pBuffer, 1, nFileSize, pFile );
     memset( pBuffer + nFileSize, 0, 32 );
     fclose( pFile );
     return (void *)pBuffer;

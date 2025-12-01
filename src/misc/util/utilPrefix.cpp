@@ -42,7 +42,7 @@
 //#include <cstdio>
 
 
-class Graph;
+struct Graph;
 class Node {
 public:
 	Node(int bitpos, int level=0)
