@@ -1454,8 +1454,8 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        "@readline//:readline",
-        "@zlib//:zlib",
+        "@readline",
+        "@zlib",
         # FIXME: This needs bz2lib?
     ],
 )

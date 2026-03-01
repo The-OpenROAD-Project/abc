@@ -21,4 +21,3 @@ http_archive(
 load("@rules_hdl//dependency_support/net_invisible_island_ncurses:net_invisible_island_ncurses.bzl", "net_invisible_island_ncurses")
 
 net_invisible_island_ncurses()
-
