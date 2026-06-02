@@ -154,6 +154,103 @@ Tim_Man_t * Tim_ManDup( Tim_Man_t * p, int fUnitDelay )
 
 /**Function*************************************************************
 
+  Synopsis    [Duplicates the timing manager while adding one flop.]
+
+  Description [Creates a new timing manager with one additional CI/CO pair
+               for a new flop. The new CI and CO are added at the end,
+               after all box inputs/outputs.]
+
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+Tim_Man_t * Tim_ManDupAddFlop( Tim_Man_t * p, int fUnitDelay )
+{
+    Tim_Man_t * pNew;
+    Tim_Box_t * pBox;
+    Tim_Obj_t * pObj;
+    float * pDelayTable, * pDelayTableNew;
+    int i, k, nInputs, nOutputs;
+
+    // clear traversal IDs
+    Tim_ManForEachCi( p, pObj, i )
+        pObj->TravId = 0;
+    Tim_ManForEachCo( p, pObj, i )
+        pObj->TravId = 0;
+
+    // create new manager with one additional CI and CO
+    pNew = Tim_ManStart( p->nCis + 1, p->nCos + 1 );
+
+    // copy existing CI connectivity information
+    memcpy( pNew->pCis, p->pCis, sizeof(Tim_Obj_t) * p->nCis );
+
+    // Initialize the new CI (flop output)
+    pNew->pCis[p->nCis].Id = p->nCis;
+    pNew->pCis[p->nCis].iObj2Box = -1;
+    pNew->pCis[p->nCis].iObj2Num = -1;
+    pNew->pCis[p->nCis].timeArr = 0.0;
+    pNew->pCis[p->nCis].timeReq = TIM_ETERNITY;
+
+    // copy existing CO connectivity information
+    memcpy( pNew->pCos, p->pCos, sizeof(Tim_Obj_t) * p->nCos );
+
+    // Initialize the new CO (flop input)
+    pNew->pCos[p->nCos].Id = p->nCos;
+    pNew->pCos[p->nCos].iObj2Box = -1;
+    pNew->pCos[p->nCos].iObj2Num = -1;
+    pNew->pCos[p->nCos].timeArr = 0.0;
+    pNew->pCos[p->nCos].timeReq = TIM_ETERNITY;
+
+    if ( fUnitDelay )
+    {
+        // clear PI arrival and PO required
+        Tim_ManInitPiArrivalAll( pNew, 0.0 );
+        Tim_ManInitPoRequiredAll( pNew, (float)TIM_ETERNITY );
+    }
+
+    // duplicate delay tables
+    if ( Tim_ManDelayTableNum(p) > 0 )
+    {
+        pNew->vDelayTables = Vec_PtrStart( Vec_PtrSize(p->vDelayTables) );
+        Tim_ManForEachTable( p, pDelayTable, i )
+        {
+            if ( pDelayTable == NULL )
+                continue;
+            assert( i == (int)pDelayTable[0] );
+            nInputs   = (int)pDelayTable[1];
+            nOutputs  = (int)pDelayTable[2];
+            pDelayTableNew = ABC_ALLOC( float, 3 + nInputs * nOutputs );
+            pDelayTableNew[0] = (int)pDelayTable[0];
+            pDelayTableNew[1] = (int)pDelayTable[1];
+            pDelayTableNew[2] = (int)pDelayTable[2];
+            for ( k = 0; k < nInputs * nOutputs; k++ )
+                if ( pDelayTable[3+k] == -ABC_INFINITY )
+                    pDelayTableNew[3+k] = -ABC_INFINITY;
+                else
+                    pDelayTableNew[3+k] = fUnitDelay ? (float)fUnitDelay : pDelayTable[3+k];
+            assert( Vec_PtrEntry(pNew->vDelayTables, i) == NULL );
+            Vec_PtrWriteEntry( pNew->vDelayTables, i, pDelayTableNew );
+        }
+    }
+
+    // duplicate boxes
+    if ( Tim_ManBoxNum(p) > 0 )
+    {
+        pNew->vBoxes = Vec_PtrAlloc( Tim_ManBoxNum(p) );
+        Tim_ManForEachBox( p, pBox, i )
+        {
+           Tim_ManCreateBox( pNew, pBox->Inouts[0], pBox->nInputs,
+                pBox->Inouts[pBox->nInputs], pBox->nOutputs, pBox->iDelayTable, pBox->fBlack );
+           Tim_ManBoxSetCopy( pNew, i, pBox->iCopy );
+        }
+    }
+
+    return pNew;
+}
+
+/**Function*************************************************************
+
   Synopsis    [Trims the timing manager.]
 
   Description []
@@ -449,6 +546,7 @@ void Tim_ManCreate( Tim_Man_t * p, void * pLib, Vec_Flt_t * vInArrs, Vec_Flt_t *
         Vec_PtrWriteEntry( p->vDelayTables, pBox->iDelayTable, pTable );
     }
     // create arrival times
+/*    
     if ( vInArrs )
     {
         if ( Vec_FltSize(vInArrs) == Tim_ManPiNum(p) ) {
@@ -461,21 +559,57 @@ void Tim_ManCreate( Tim_Man_t * p, void * pLib, Vec_Flt_t * vInArrs, Vec_Flt_t *
         }
         else assert( 0 );
     }
+*/
+    if ( vInArrs )
+    {
+        // Handle special case when timing is only for PIs (without boxes/flops)
+        // This happens when old files provide timing for actual design PIs only
+        if ( Vec_FltSize(vInArrs) < Tim_ManPiNum(p) )
+        {
+            // Special case: timing for actual PIs only (less than Tim_ManPiNum when boxes exist)
+            for ( i = 0; i < Vec_FltSize(vInArrs); i++ )
+                p->pCis[i].timeArr = Vec_FltEntry(vInArrs, i);
+        }
+        else if ( Vec_FltSize(vInArrs) == Tim_ManPiNum(p) )
+        {
+            // Original case: timing for PIs (up to first box)
+            Tim_ManForEachPi( p, pObj, i )
+                pObj->timeArr = Vec_FltEntry(vInArrs, i);
+        }
+        else
+        {
+            // General case: timing for all or partial CIs
+            float Num;
+            Vec_FltForEachEntry( vInArrs, Num, i )
+                if ( i < p->nCis )
+                    p->pCis[i].timeArr = Num;
+        }
+    }
+
     // create required times
     if ( vOutReqs )
     {
-        k = 0;
-        if ( Vec_FltSize(vOutReqs) == Tim_ManPoNum(p) ) {
+        // Handle special case when timing is only for POs (without boxes/flops)
+        // This happens when old files provide timing for actual design POs only
+        if ( Vec_FltSize(vOutReqs) <= Tim_ManPoNum(p) )
+        {
+            // Timing for POs (may be partial — omitted entries stay at TIM_ETERNITY)
+            k = 0;
             Tim_ManForEachPo( p, pObj, i )
+            {
+                if ( k >= Vec_FltSize(vOutReqs) )
+                    break;
                 pObj->timeReq = Vec_FltEntry(vOutReqs, k++);
-            assert( k == Tim_ManPoNum(p) );
+            }
         }
-        else if ( Vec_FltSize(vOutReqs) == Tim_ManCoNum(p) ) {
-            Tim_ManForEachCo( p, pObj, i )
-                pObj->timeReq = Vec_FltEntry(vOutReqs, k++);
-            assert( k == Tim_ManCoNum(p) );
+        else
+        {
+            // General case: timing for all or partial COs
+            float Num;
+            Vec_FltForEachEntry( vOutReqs, Num, i )
+                if ( i < p->nCos )
+                    p->pCos[i].timeReq = Num;
         }
-        else assert( 0 );
     }
 }
 
@@ -491,35 +625,79 @@ void Tim_ManCreate( Tim_Man_t * p, void * pLib, Vec_Flt_t * vInArrs, Vec_Flt_t *
   SeeAlso     []
 
 ***********************************************************************/
-float * Tim_ManGetArrTimes( Tim_Man_t * p )
+float * Tim_ManGetArrTimes( Tim_Man_t * p, int nRegs )
 {
     float * pTimes;
     Tim_Obj_t * pObj;
     int i;
+    int fFoundTiming = 0;
+    // Check if any PIs have non-zero arrival times
     Tim_ManForEachPi( p, pObj, i )
         if ( pObj->timeArr != 0.0 )
+        {
+            fFoundTiming = 1;
             break;
-    if ( i == Tim_ManPiNum(p) )
+        }
+    if ( !fFoundTiming && nRegs > 0 )
+    {
+        // Check if any flops have non-zero arrival times
+        for ( i = Tim_ManCiNum(p) - nRegs; i < Tim_ManCiNum(p); i++ )
+            if ( p->pCis[i].timeArr != 0.0 )
+            {
+                fFoundTiming = 1;
+                break;
+            }
+        if ( !fFoundTiming )
+            return NULL; // No timing info at all
+    }
+    else if ( !fFoundTiming )
         return NULL;
-    pTimes  = ABC_FALLOC( float, Tim_ManCiNum(p) );
+    // Allocate array for PIs + Flops (compact format, no box outputs)
+    pTimes = ABC_FALLOC( float, Tim_ManPiNum(p) + nRegs );
+    // Copy PI timings
     Tim_ManForEachPi( p, pObj, i )
         pTimes[i] = pObj->timeArr;
+    // Copy flop timings (from the end of CI array)
+    for ( i = 0; i < nRegs; i++ )
+        pTimes[Tim_ManPiNum(p) + i] = p->pCis[Tim_ManCiNum(p) - nRegs + i].timeArr;
     return pTimes;
 }
-float * Tim_ManGetReqTimes( Tim_Man_t * p )
+float * Tim_ManGetReqTimes( Tim_Man_t * p, int nRegs )
 {
     float * pTimes;
     Tim_Obj_t * pObj;
     int i, k = 0;
+    int fFoundConstraint = 0;
+    // Check if any POs have non-infinity required times
     Tim_ManForEachPo( p, pObj, i )
         if ( pObj->timeReq != TIM_ETERNITY )
+        {
+            fFoundConstraint = 1;
             break;
-    if ( i == Tim_ManPoNum(p) )
+        }
+    if ( !fFoundConstraint && nRegs > 0 )
+    {
+        // Check if any flops have non-infinity required times
+        for ( i = Tim_ManCoNum(p) - nRegs; i < Tim_ManCoNum(p); i++ )
+            if ( p->pCos[i].timeReq != TIM_ETERNITY )
+            {
+                fFoundConstraint = 1;
+                break;
+            }
+        if ( !fFoundConstraint )
+            return NULL; // No timing info at all
+    }
+    else if ( !fFoundConstraint )
         return NULL;
-    pTimes  = ABC_FALLOC( float, Tim_ManCoNum(p) );
+    // Allocate array for POs + Flops (compact format, no box inputs)
+    pTimes = ABC_FALLOC( float, Tim_ManPoNum(p) + nRegs );
+    // Copy PO timings
     Tim_ManForEachPo( p, pObj, i )
-        pTimes[k++] = pObj->timeArr;
+        pTimes[k++] = pObj->timeReq;
     assert( k == Tim_ManPoNum(p) );
+    // Copy flop timings (from the end of CO array)
+    for ( i = 0; i < nRegs; i++ )
+        pTimes[Tim_ManPoNum(p) + i] = p->pCos[Tim_ManCoNum(p) - nRegs + i].timeReq;
     return pTimes;
 }
 

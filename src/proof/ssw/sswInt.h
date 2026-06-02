@@ -190,6 +190,7 @@ static inline void        Ssw_ObjSetFrame_( Ssw_Frm_t * p, Aig_Obj_t * pObj, int
 
 static inline Aig_Obj_t * Ssw_ObjChild0Fra_( Ssw_Frm_t * p, Aig_Obj_t * pObj, int i ) { assert( !Aig_IsComplement(pObj) ); return Aig_ObjFanin0(pObj)? Aig_NotCond(Ssw_ObjFrame_(p, Aig_ObjFanin0(pObj), i), Aig_ObjFaninC0(pObj)) : NULL;  }
 static inline Aig_Obj_t * Ssw_ObjChild1Fra_( Ssw_Frm_t * p, Aig_Obj_t * pObj, int i ) { assert( !Aig_IsComplement(pObj) ); return Aig_ObjFanin1(pObj)? Aig_NotCond(Ssw_ObjFrame_(p, Aig_ObjFanin1(pObj), i), Aig_ObjFaninC1(pObj)) : NULL;  }
+static inline int         Ssw_ManCallbackStop( Ssw_Man_t * p ) { return (p && p->pPars && p->pPars->pFunc) ? ((int (*)(void *))p->pPars->pFunc)( p->pPars->pData ) : 0; }
 
 ////////////////////////////////////////////////////////////////////////
 ///                    FUNCTION DECLARATIONS                         ///
@@ -299,4 +300,3 @@ ABC_NAMESPACE_HEADER_END
 ////////////////////////////////////////////////////////////////////////
 ///                       END OF FILE                                ///
 ////////////////////////////////////////////////////////////////////////
-

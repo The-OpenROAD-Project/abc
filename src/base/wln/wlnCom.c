@@ -92,24 +92,30 @@ void Wln_End( Abc_Frame_t * pAbc )
 ******************************************************************************/
 int Abc_CommandYosys( Abc_Frame_t * pAbc, int argc, char ** argv )
 {
-    extern Abc_Ntk_t * Wln_ReadMappedSystemVerilog( char * pFileName, char * pTopModule, char * pDefines, char * pLibrary, int fVerbose );
-    extern Gia_Man_t * Wln_BlastSystemVerilog( char * pFileName, char * pTopModule, char * pDefines, int fSkipStrash, int fInvert, int fTechMap, int fLibInDir, int fVerbose );
-    extern Rtl_Lib_t * Wln_ReadSystemVerilog( char * pFileName, char * pTopModule, char * pDefines, int fCollapse, int fVerbose );
+    extern Abc_Ntk_t * Wln_ReadMappedSystemVerilog( char ** ppFileNames, int nFileNames, char * pTopModule, char * pDefines, char * pLibrary, int fVerbose );
+    extern Gia_Man_t * Wln_BlastSystemVerilog( char ** ppFileNames, int nFileNames, char * pTopModule, char * pDefines, int fSkipStrash, int fInvert, int fTechMap, int fLibInDir, int fSetUndef, int fVerbose );
+    extern Rtl_Lib_t * Wln_ReadSystemVerilog( char ** ppFileNames, int nFileNames, char * pTopModule, char * pDefines, int fCollapse, int fVerbose );
 
     FILE * pFile;
     char * pFileName = NULL;
+    char * pFileName2= NULL;
+    char ** ppFileNames = NULL;
+    int nFileNames = 0;
+    int fFileNamesAlloc = 0;
     char * pTopModule= NULL;
     char * pDefines  = NULL;
     char * pLibrary  = NULL;
     int fBlast       =    0;
+    int fDontBlast   =    0;
     int fInvert      =    0;
     int fTechMap     =    1;
     int fLibInDir    =    0;
     int fSkipStrash  =    0;
     int fCollapse    =    0;
+    int fSetUndef    =    0;
     int c, fVerbose  =    0;
     Extra_UtilGetoptReset();
-    while ( ( c = Extra_UtilGetopt( argc, argv, "TDLbismlcvh" ) ) != EOF )
+    while ( ( c = Extra_UtilGetopt( argc, argv, "TMDLFbdisumlcvh" ) ) != EOF )
     {
         switch ( c )
         {
@@ -117,6 +123,15 @@ int Abc_CommandYosys( Abc_Frame_t * pAbc, int argc, char ** argv )
             if ( globalUtilOptind >= argc )
             {
                 Abc_Print( -1, "Command line switch \"-T\" should be followed by a file name.\n" );
+                goto usage;
+            }
+            pTopModule = argv[globalUtilOptind];
+            globalUtilOptind++;
+            break;
+        case 'M':
+            if ( globalUtilOptind >= argc )
+            {
+                Abc_Print( -1, "Command line switch \"-M\" should be followed by a file name.\n" );
                 goto usage;
             }
             pTopModule = argv[globalUtilOptind];
@@ -140,8 +155,20 @@ int Abc_CommandYosys( Abc_Frame_t * pAbc, int argc, char ** argv )
             pLibrary = argv[globalUtilOptind];
             globalUtilOptind++;
             break;
+        case 'F':
+            if ( globalUtilOptind >= argc )
+            {
+                Abc_Print( -1, "Command line switch \"-F\" should be followed by a file name.\n" );
+                goto usage;
+            }
+            pFileName2 = argv[globalUtilOptind];
+            globalUtilOptind++;
+            break;
         case 'b':
             fBlast ^= 1;
+            break;
+        case 'd':
+            fDontBlast ^= 1;
             break;
         case 'i':
             fInvert ^= 1;
@@ -158,6 +185,9 @@ int Abc_CommandYosys( Abc_Frame_t * pAbc, int argc, char ** argv )
         case 'c':
             fCollapse ^= 1;
             break;
+        case 'u':
+            fSetUndef ^= 1;
+            break;
         case 'v':
             fVerbose ^= 1;
             break;
@@ -167,50 +197,91 @@ int Abc_CommandYosys( Abc_Frame_t * pAbc, int argc, char ** argv )
             goto usage;
         }
     }
-    if ( argc != globalUtilOptind + 1 )
+    nFileNames = argc - globalUtilOptind;
+    if ( nFileNames < 1 )
     {
-        printf( "Abc_CommandReadWlc(): Input file name should be given on the command line.\n" );
+        printf( "Abc_CommandReadWlc(): Input file name(s) should be given on the command line.\n" );
         return 0;
     }
-    // get the file name
-    pFileName = argv[globalUtilOptind];
-    if ( (pFile = fopen( pFileName, "r" )) == NULL )
+    ppFileNames = pFileName2 ? ABC_ALLOC( char *, nFileNames + 1 ) : argv + globalUtilOptind;
+    fFileNamesAlloc = pFileName2 != NULL;
+    if ( pFileName2 )
     {
-        Abc_Print( 1, "Cannot open input file \"%s\". ", pFileName );
-        if ( (pFileName = Extra_FileGetSimilarName( pFileName, ".v", ".sv", NULL, NULL, NULL )) )
-            Abc_Print( 1, "Did you mean \"%s\"?", pFileName );
-        Abc_Print( 1, "\n" );
-        return 0;
+        int i;
+        for ( i = 0; i < nFileNames; i++ )
+            ppFileNames[i] = argv[globalUtilOptind + i];
+        ppFileNames[nFileNames++] = pFileName2;
     }
-    fclose( pFile );
+    pFileName = ppFileNames[0];
+    for ( c = 0; c < nFileNames; c++ )
+    {
+        if ( (pFile = fopen( ppFileNames[c], "r" )) == NULL )
+        {
+            Abc_Print( 1, "Cannot open input file \"%s\". ", ppFileNames[c] );
+            if ( (pFileName = Extra_FileGetSimilarName( ppFileNames[c], ".v", ".sv", NULL, NULL, NULL )) )
+                Abc_Print( 1, "Did you mean \"%s\"?", pFileName );
+            Abc_Print( 1, "\n" );
+            if ( fFileNamesAlloc )
+                ABC_FREE( ppFileNames );
+            return 0;
+        }
+        fclose( pFile );
+    }
+    pFileName = ppFileNames[0];
+    if ( nFileNames > 1 )
+    {
+        int i, fAllVerilog = 1;
+        for ( i = 0; i < nFileNames; i++ )
+            fAllVerilog &= Extra_FileIsType( ppFileNames[i], ".v", ".sv", NULL );
+        if ( !fAllVerilog )
+        {
+            Abc_Print( 1, "Multiple input files are supported only for Verilog/SystemVerilog files.\n" );
+            if ( fFileNamesAlloc )
+                ABC_FREE( ppFileNames );
+            return 0;
+        }
+    }
 
     // perform reading
-    if ( pLibrary ) 
+    if ( pLibrary )
     {
         Abc_Ntk_t * pNtk = NULL;
         if ( !strcmp( Extra_FileNameExtension(pFileName), "v" )  )
-            pNtk = Wln_ReadMappedSystemVerilog( pFileName, pTopModule, pDefines, pLibrary, fVerbose );
+            pNtk = Wln_ReadMappedSystemVerilog( ppFileNames, nFileNames, pTopModule, pDefines, pLibrary, fVerbose );
         else if ( !strcmp( Extra_FileNameExtension(pFileName), "sv" )  )
-            pNtk = Wln_ReadMappedSystemVerilog( pFileName, pTopModule, pDefines, pLibrary, fVerbose );
+            pNtk = Wln_ReadMappedSystemVerilog( ppFileNames, nFileNames, pTopModule, pDefines, pLibrary, fVerbose );
         else
         {
             printf( "Abc_CommandYosys(): Unknown file extension.\n" );
+            if ( fFileNamesAlloc )
+                ABC_FREE( ppFileNames );
             return 0;
         }
         Abc_FrameReplaceCurrentNetwork( pAbc, pNtk );
     }
-    else if ( fBlast )
+    else if ( !fDontBlast )
     {
         Gia_Man_t * pNew = NULL;
         if ( !strcmp( Extra_FileNameExtension(pFileName), "v" )  )
-            pNew = Wln_BlastSystemVerilog( pFileName, pTopModule, pDefines, fSkipStrash, fInvert, fTechMap, fLibInDir, fVerbose );
+            pNew = Wln_BlastSystemVerilog( ppFileNames, nFileNames, pTopModule, pDefines, fSkipStrash, fInvert, fTechMap, fLibInDir, fSetUndef, fVerbose );
         else if ( !strcmp( Extra_FileNameExtension(pFileName), "sv" )  )
-            pNew = Wln_BlastSystemVerilog( pFileName, pTopModule, pDefines, fSkipStrash, fInvert, fTechMap, fLibInDir, fVerbose );
+            pNew = Wln_BlastSystemVerilog( ppFileNames, nFileNames, pTopModule, pDefines, fSkipStrash, fInvert, fTechMap, fLibInDir, fSetUndef, fVerbose );
         else if ( !strcmp( Extra_FileNameExtension(pFileName), "rtlil" )  )
-            pNew = Wln_BlastSystemVerilog( pFileName, pTopModule, pDefines, fSkipStrash, fInvert, fTechMap, fLibInDir, fVerbose );
+        {
+            if ( nFileNames > 1 )
+            {
+                Abc_Print( 1, "Multiple input files are supported only for Verilog/SystemVerilog files.\n" );
+                if ( fFileNamesAlloc )
+                    ABC_FREE( ppFileNames );
+                return 0;
+            }
+            pNew = Wln_BlastSystemVerilog( ppFileNames, nFileNames, pTopModule, pDefines, fSkipStrash, fInvert, fTechMap, fLibInDir, fSetUndef, fVerbose );
+        }
         else
         {
             printf( "Abc_CommandYosys(): Unknown file extension.\n" );
+            if ( fFileNamesAlloc )
+                ABC_FREE( ppFileNames );
             return 0;
         }
         Abc_FrameUpdateGia( pAbc, pNew );
@@ -219,31 +290,48 @@ int Abc_CommandYosys( Abc_Frame_t * pAbc, int argc, char ** argv )
     {
         Rtl_Lib_t * pLib = NULL;
         if ( !strcmp( Extra_FileNameExtension(pFileName), "v" )  )
-            pLib = Wln_ReadSystemVerilog( pFileName, pTopModule, pDefines, fCollapse, fVerbose );
+            pLib = Wln_ReadSystemVerilog( ppFileNames, nFileNames, pTopModule, pDefines, fCollapse, fVerbose );
         else if ( !strcmp( Extra_FileNameExtension(pFileName), "sv" )  )
-            pLib = Wln_ReadSystemVerilog( pFileName, pTopModule, pDefines, fCollapse, fVerbose );
+            pLib = Wln_ReadSystemVerilog( ppFileNames, nFileNames, pTopModule, pDefines, fCollapse, fVerbose );
         else if ( !strcmp( Extra_FileNameExtension(pFileName), "rtlil" )  )
-            pLib = Wln_ReadSystemVerilog( pFileName, pTopModule, pDefines, fCollapse, fVerbose );
+        {
+            if ( nFileNames > 1 )
+            {
+                Abc_Print( 1, "Multiple input files are supported only for Verilog/SystemVerilog files.\n" );
+                if ( fFileNamesAlloc )
+                    ABC_FREE( ppFileNames );
+                return 0;
+            }
+            pLib = Wln_ReadSystemVerilog( ppFileNames, nFileNames, pTopModule, pDefines, fCollapse, fVerbose );
+        }
         else
         {
             printf( "Abc_CommandYosys(): Unknown file extension.\n" );
+            if ( fFileNamesAlloc )
+                ABC_FREE( ppFileNames );
             return 0;
         }
         Wln_AbcUpdateRtl( pAbc, pLib );
     }
+    if ( fFileNamesAlloc )
+        ABC_FREE( ppFileNames );
     return 0;
 usage:
-    Abc_Print( -2, "usage: %%yosys [-T <module>] [-D <defines>] [-L <liberty_file>] [-bismlcvh] <file_name>\n" );
+    Abc_Print( -2, "usage: %%yosys [-TM <module>] [-D <defines>] [-L <liberty_file>] [-F <file>] [-bdisumlcvh] <file_name> [file_name...]\n" );
     Abc_Print( -2, "\t         reads Verilog or SystemVerilog using Yosys\n" );
     Abc_Print( -2, "\t-T     : specify the top module name (default uses \"-auto-top\")\n" );
+    Abc_Print( -2, "\t-M     : specify the top module name (default uses \"-auto-top\") (equivalent to \"-T\")\n" );
     Abc_Print( -2, "\t-D     : specify defines to be used by Yosys (default \"not used\")\n" );
     Abc_Print( -2, "\t-L     : specify the Liberty library to read a mapped design (default \"not used\")\n" );
-    Abc_Print( -2, "\t-b     : toggle bit-blasting the design into an AIG using Yosys [default = %s]\n", fBlast? "yes": "no" );
+    Abc_Print( -2, "\t-F     : specify an additional Verilog/SystemVerilog file (default \"not used\")\n" );
+    Abc_Print( -2, "\t-b     : toggle bit-blasting the design into an AIG using Yosys (this switch has no effect)\n" );
+    Abc_Print( -2, "\t-d     : toggle bit-blasting the design into an AIG using Yosys [default = %s]\n", !fDontBlast? "yes": "no" );
     Abc_Print( -2, "\t-i     : toggle inverting the outputs (useful for miters) [default = %s]\n", fInvert? "yes": "no" );
     Abc_Print( -2, "\t-s     : toggle no structural hashing during bit-blasting [default = %s]\n", fSkipStrash? "no strash": "strash" );
     Abc_Print( -2, "\t-m     : toggle using \"techmap\" to blast operators [default = %s]\n", fTechMap? "yes": "no" );
     Abc_Print( -2, "\t-l     : toggle looking for \"techmap.v\" in the current directory [default = %s]\n", fLibInDir? "yes": "no" );
     Abc_Print( -2, "\t-c     : toggle collapsing design hierarchy using Yosys [default = %s]\n", fCollapse? "yes": "no" );
+    Abc_Print( -2, "\t-u     : toggle replacing undefined/reset-X with zero using Yosys setundef [default = %s]\n", fSetUndef? "yes": "no" );
     Abc_Print( -2, "\t-v     : toggle printing verbose information [default = %s]\n", fVerbose? "yes": "no" );
     Abc_Print( -2, "\t-h     : print the command usage\n");
     return 1;
@@ -575,4 +663,3 @@ usage:
 
 
 ABC_NAMESPACE_IMPL_END
-

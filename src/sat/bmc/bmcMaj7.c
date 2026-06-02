@@ -54,7 +54,8 @@ static inline void Exa7_CadicalSetRuntimeLimit( cadical_solver * pSat, int nSeco
 ///                        DECLARATIONS                              ///
 ////////////////////////////////////////////////////////////////////////
 
-#define MAJ_NOBJS  64 // Const0 + Const1 + nVars + nNodes
+#define MAJ_NOBJS    64 // Const0 + Const1 + nVars + nNodes
+#define MAJ_MAX_LUT   8
 
 typedef struct Exa7_Man_t_ Exa7_Man_t;
 struct Exa7_Man_t_ 
@@ -71,7 +72,7 @@ struct Exa7_Man_t_
     Vec_Wrd_t *       vInfo;     // nVars + nNodes + 1
     Vec_Bit_t *       vUsed2;    // bit masks
     Vec_Bit_t *       vUsed3;    // bit masks
-    int               VarMarks[MAJ_NOBJS][6][MAJ_NOBJS]; // variable marks
+    int               VarMarks[MAJ_NOBJS][MAJ_MAX_LUT][MAJ_NOBJS]; // variable marks
     int               VarVals[MAJ_NOBJS]; // values of the first nVars variables
     Vec_Wec_t *       vOutLits;  // output vars
     Vec_Wec_t *       vInVars;   // input vars
@@ -277,6 +278,7 @@ static Exa7_Man_t * Exa7_ManAlloc( Bmc_EsPar_t * pPars, word * pTruth )
     p->nVars      = pPars->nVars;
     p->nNodes     = pPars->nNodes;
     p->nLutSize   = pPars->nLutSize;
+    assert( p->nLutSize <= MAJ_MAX_LUT );
     p->LutMask    = (1 << pPars->nLutSize) - 1;
     p->nObjs      = pPars->nVars + pPars->nNodes;
     p->nWords     = Abc_TtWordNum(pPars->nVars);
@@ -291,7 +293,8 @@ static Exa7_Man_t * Exa7_ManAlloc( Bmc_EsPar_t * pPars, word * pTruth )
     p->pSat       = cadical_solver_new();
     p->nVarAlloc  = Exa7_ManVarReserve( p );
     assert( p->nVarAlloc >= p->iVar );
-    cadical_solver_setnvars( p->pSat, p->nVarAlloc );
+    //cadical_solver_setnvars( p->pSat, p->nVarAlloc );
+    cadical_solver_setnvars( p->pSat, p->nVarAlloc+(p->nLutSize+1)*p->nNodes*(1 << p->nVars) );
     if ( pPars->RuntimeLim )
         Exa7_CadicalSetRuntimeLimit( p->pSat, pPars->RuntimeLim );
     return p;
@@ -333,7 +336,7 @@ static inline int Exa7_ManFindFanin( Exa7_Man_t * p, int i, int k )
 static inline int Exa7_ManEval( Exa7_Man_t * p )
 {
     static int Flag = 0;
-    int i, k, j, iMint; word * pFanins[6];
+    int i, k, j, iMint; word * pFanins[MAJ_MAX_LUT];
     for ( i = p->nVars; i < p->nObjs; i++ )
     {
         int iVarStart = 1 + p->LutMask*(i - p->nVars);
@@ -402,6 +405,232 @@ static void Exa7_ManPrintSolution( Exa7_Man_t * p, int fCompl )
         }
         printf( " )\n" );
     }
+}
+
+/**Function*************************************************************
+
+  Synopsis    []
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+static Vec_Wrd_t * Exa7_ManSaveTruthTables( Exa7_Man_t * p, int fCompl )
+{
+    int i, k, nWordsNode, nMintsNode;
+    assert( p->nLutSize <= MAJ_MAX_LUT );
+    nMintsNode = 1 << p->nLutSize;
+    nWordsNode = (p->nLutSize <= 6) ? 1 : (p->nLutSize == 7 ? 2 : 4);
+    Vec_Wrd_t * vTruths = Vec_WrdStart( p->nObjs * nWordsNode );
+    for ( i = p->nVars; i < p->nObjs; i++ )
+    {
+        word Truth[4] = {0, 0, 0, 0};
+        int iVarStart = 1 + p->LutMask*(i - p->nVars);
+        for ( k = 0; k < p->LutMask; k++ )
+        {
+            if ( cadical_solver_get_var_value(p->pSat, iVarStart + k) )
+            {
+                int bit = k + 1; // minterm index (minterm 0 is fixed to 0)
+                int w = bit >> 6;
+                int b = bit & 63;
+                Truth[w] |= ((word)1 << b);
+            }
+        }
+        // complement the output fully if needed (including minterm 0)
+        if ( i == p->nObjs - 1 && fCompl )
+        {
+            for ( int w = 0; w < nWordsNode; w++ )
+            {
+                word Mask;
+                int rem = nMintsNode - w * 64;
+                if ( rem <= 0 )
+                    Mask = 0;
+                else if ( rem >= 64 )
+                    Mask = ~(word)0;
+                else
+                    Mask = (((word)1) << rem) - 1;
+                Truth[w] = (~Truth[w]) & Mask;
+            }
+        }
+        if ( p->nLutSize < 6 )
+            Truth[0] = Abc_Tt6Stretch( Truth[0], p->nLutSize );
+        for ( int w = 0; w < nWordsNode; w++ )
+            Vec_WrdWriteEntry( vTruths, i * nWordsNode + w, Truth[w] );
+    }
+    return vTruths;
+}
+static void Exa7_ManPrintPerm( Exa7_Man_t * p )
+{
+    int i, k, iVar;
+    for ( i = p->nVars; i < p->nObjs; i++ )
+    {
+        if ( i > p->nVars )
+            printf( "_" );
+        for ( k = p->nLutSize - 1; k >= 0; k-- )
+        {
+            iVar = Exa7_ManFindFanin( p, i, k );
+            if ( iVar >= 0 && iVar < p->nVars )
+                printf( "%c", 'a'+iVar );
+        }
+    }
+}
+static void Exa7_ManDumpVerilogName( Exa7_Man_t * p, char * pBase )
+{
+    char Flags[32];
+    int n = 0;
+    if ( p->pPars->pSymStr )
+        snprintf( pBase, 128, "Y%.*s", 15, p->pPars->pSymStr );
+    else
+        snprintf( pBase, 128, "%.*s", 16, p->pPars->pTtStr );
+    if ( p->pPars->fUseIncr )    Flags[n++] = 'i';
+    if ( p->pPars->fOnlyAnd )    Flags[n++] = 'a';
+    if ( p->pPars->fFewerVars )  Flags[n++] = 'o';
+    if ( p->pPars->fLutCascade ) Flags[n++] = 'r';
+    if ( p->pPars->fLutInFixed ) Flags[n++] = 'f';
+    if ( p->pPars->fGlucose )    Flags[n++] = 'g';
+    if ( p->pPars->fCadical )    Flags[n++] = 'c';
+    if ( p->pPars->fKissat )     Flags[n++] = 'k';
+    if ( p->pPars->fDumpBlif )   Flags[n++] = 'd';
+    if ( p->pPars->fMinNodes )   Flags[n++] = 'm';
+    if ( p->pPars->fUsePerm )    Flags[n++] = 'p';
+    Flags[n] = '\0';
+    snprintf( pBase + strlen(pBase), 128 - strlen(pBase), "_K%d_M%d_%s", p->nLutSize, p->nNodes, Flags );
+}
+static int Exa7_ManDumpCascadeVerilog( Exa7_Man_t * p, int fCompl )
+{
+    static const char * pBels[8] = { "A6LUT", "B6LUT", "C6LUT", "D6LUT", "E6LUT", "F6LUT", "G6LUT", "H6LUT" };
+    int i, k, iVar;
+    char pBase[128], pFileName[132], pModuleName[160];
+    FILE * pFile;
+    if ( p->nLutSize > 6 )
+    {
+        if ( !p->pPars->fSilent )
+            printf( "Vivado LUT cascade dumping supports only LUTs with up to 6 inputs. Falling back to BLIF dumping.\n" );
+        return 0;
+    }
+    Exa7_ManDumpVerilogName( p, pBase );
+    snprintf( pFileName, sizeof(pFileName), "%s.v", pBase );
+    snprintf( pModuleName, sizeof(pModuleName), "lut_cascade_%s", pBase );
+    pFile = fopen( pFileName, "wb" );
+    if ( pFile == NULL )
+        return 0;
+    fprintf( pFile, "// Vivado LUT cascade for the %d-input function %s synthesized by ABC on %s\n", p->nVars, pBase, Extra_TimeStamp() );
+    fprintf( pFile, "module %s (\n", pModuleName );
+    fprintf( pFile, "  input  wire [%d:0] x,\n", p->nVars - 1 );
+    fprintf( pFile, "  output wire       y\n" );
+    fprintf( pFile, ");\n" );
+    for ( i = 0; i < p->nNodes - 1; i++ )
+        fprintf( pFile, "  (* KEEP = \"yes\", DONT_TOUCH = \"yes\" *) wire n%d;\n", i );
+    if ( p->nNodes > 1 )
+        fprintf( pFile, "\n" );
+    for ( i = p->nVars; i < p->nObjs; i++ )
+    {
+        int iNode = i - p->nVars;
+        int iSlice = iNode / 8;
+        int iVarStart = 1 + p->LutMask * iNode;
+        word Truth = 0;
+        word Mask = p->nLutSize == 6 ? ~(word)0 : ((((word)1) << (1 << p->nLutSize)) - 1);
+        for ( k = 0; k < p->LutMask; k++ )
+            if ( cadical_solver_get_var_value(p->pSat, iVarStart + k) )
+                Truth |= ((word)1) << (k + 1);
+        if ( i == p->nObjs - 1 && fCompl )
+            Truth = (~Truth) & Mask;
+        if ( p->nLutSize < 6 )
+            Truth = Abc_Tt6Stretch( Truth, p->nLutSize );
+        fprintf( pFile, "  (* HU_SET = \"hu_lut_cascade_%d\", RLOC = \"X0Y%d\", BEL = \"%s\", DONT_TOUCH = \"yes\", KEEP = \"yes\", IS_BEL_FIXED = \"yes\" *)\n",
+            iSlice, iSlice, pBels[iNode % 8] );
+        fprintf( pFile, "  LUT6 #(.INIT(64'h%016llX)) u_lut%d (\n", (unsigned long long)Truth, iNode );
+        for ( k = 0; k < 6; k++ )
+        {
+            fprintf( pFile, "    .I%d(", k );
+            if ( k < p->nLutSize )
+            {
+                iVar = Exa7_ManFindFanin( p, i, k );
+                if ( iVar < p->nVars )
+                    fprintf( pFile, "x[%d]", iVar );
+                else
+                    fprintf( pFile, "n%d", iVar - p->nVars );
+            }
+            else
+                fprintf( pFile, "1'b0" );
+            fprintf( pFile, "),\n" );
+        }
+        if ( i == p->nObjs - 1 )
+            fprintf( pFile, "    .O(y)\n" );
+        else
+            fprintf( pFile, "    .O(n%d)\n", iNode );
+        fprintf( pFile, "  );\n\n" );
+    }
+    fprintf( pFile, "endmodule\n\n" );
+    fclose( pFile );
+    if ( !p->pPars->fSilent )
+        printf( "Finished dumping the resulting LUT cascade into file \"%s\".\n", pFileName );
+    return 1;
+}
+static int Exa7_ManDumpVerilog( Exa7_Man_t * p, int fCompl )
+{
+    int i, k, iVar;
+    int nBits = 1 << p->nLutSize;
+    int nDigits = (nBits + 3) >> 2;
+    char pBase[128], pFileName[132], pModuleName[160];
+    FILE * pFile;
+    if ( p->nLutSize > 6 )
+    {
+        if ( !p->pPars->fSilent )
+            printf( "Vivado LUT dumping supports only LUTs with up to 6 inputs. Skipping Verilog dump.\n" );
+        return 0;
+    }
+    Exa7_ManDumpVerilogName( p, pBase );
+    snprintf( pFileName, sizeof(pFileName), "%s.v", pBase );
+    snprintf( pModuleName, sizeof(pModuleName), "lut_net_%s", pBase );
+    pFile = fopen( pFileName, "wb" );
+    if ( pFile == NULL )
+        return 0;
+    fprintf( pFile, "// Vivado LUT net for the %d-input function %s synthesized by ABC on %s\n", p->nVars, pBase, Extra_TimeStamp() );
+    fprintf( pFile, "module %s (\n", pModuleName );
+    fprintf( pFile, "  input  wire [%d:0] x,\n", p->nVars - 1 );
+    fprintf( pFile, "  output wire       y\n" );
+    fprintf( pFile, ");\n" );
+    for ( i = 0; i < p->nNodes - 1; i++ )
+        fprintf( pFile, "  wire n%d;\n", i );
+    if ( p->nNodes > 1 )
+        fprintf( pFile, "\n" );
+    for ( i = p->nVars; i < p->nObjs; i++ )
+    {
+        int iNode = i - p->nVars;
+        int iVarStart = 1 + p->LutMask * iNode;
+        word Truth = 0;
+        word Mask = p->nLutSize == 6 ? ~(word)0 : ((((word)1) << nBits) - 1);
+        for ( k = 0; k < p->LutMask; k++ )
+            if ( cadical_solver_get_var_value(p->pSat, iVarStart + k) )
+                Truth |= ((word)1) << (k + 1);
+        if ( i == p->nObjs - 1 && fCompl )
+            Truth = (~Truth) & Mask;
+        fprintf( pFile, "  LUT%d #(.INIT(%d'h%0*llX)) u_lut%d (\n", p->nLutSize, nBits, nDigits, (unsigned long long)Truth, iNode );
+        for ( k = 0; k < p->nLutSize; k++ )
+        {
+            fprintf( pFile, "    .I%d(", k );
+            iVar = Exa7_ManFindFanin( p, i, k );
+            if ( iVar < p->nVars )
+                fprintf( pFile, "x[%d]", iVar );
+            else
+                fprintf( pFile, "n%d", iVar - p->nVars );
+            fprintf( pFile, "),\n" );
+        }
+        if ( i == p->nObjs - 1 )
+            fprintf( pFile, "    .O(y)\n" );
+        else
+            fprintf( pFile, "    .O(n%d)\n", iNode );
+        fprintf( pFile, "  );\n\n" );
+    }
+    fprintf( pFile, "endmodule\n\n" );
+    fclose( pFile );
+    if ( !p->pPars->fSilent )
+        printf( "Finished dumping the resulting LUT network into file \"%s\".\n", pFileName );
+    return 1;
 }
 
 /**Function*************************************************************
@@ -585,7 +814,7 @@ static int Exa7_ManAddCnf( Exa7_Man_t * p, int iMint )
     for ( i = 0; i < p->nVars; i++ )
         p->VarVals[i] = (iMint >> i) & 1;
 //    sat_solver_setnvars( p->pSat, p->iVar + (p->nLutSize+1)*p->nNodes );
-    cadical_solver_setnvars( p->pSat, p->iVar + (p->nLutSize+1)*p->nNodes );
+    //cadical_solver_setnvars( p->pSat, p->iVar + (p->nLutSize+1)*p->nNodes );
     //printf( "Adding clauses for minterm %d with value %d.\n", iMint, Value );
     for ( i = p->nVars; i < p->nObjs; i++ )
     {
@@ -704,22 +933,27 @@ void Exa7_ManPrint( Exa7_Man_t * p, int i, int iMint, abctime clk )
 }
 int Exa7_ManExactSynthesis( Bmc_EsPar_t * pPars )
 {
+    extern int Exa7_ManExactSynthesisIter( Bmc_EsPar_t * pPars );
+    if ( pPars->fMinNodes )
+        return Exa7_ManExactSynthesisIter( pPars );
     int i, status, Res = 0, iMint = 1;
     abctime clkTotal = Abc_Clock();
     Exa7_Man_t * p; int fCompl = 0;
-    word pTruth[64]; 
+    int nTruthWords = Abc_TtWordNum( pPars->nVars );
+    word * pTruth = ABC_CALLOC( word, nTruthWords );
+    assert( pTruth );
     if ( pPars->pSymStr ) {
         word * pFun = Abc_TtSymFunGenerate( pPars->pSymStr, pPars->nVars );
         pPars->pTtStr = ABC_CALLOC( char, pPars->nVars > 2 ? (1 << (pPars->nVars-2)) + 1 : 2 );
         Extra_PrintHexadecimalString( pPars->pTtStr, (unsigned *)pFun, pPars->nVars );
-        if ( !pPars->fSilent ) printf( "Generated symmetric function: %s\n", pPars->pTtStr );
+        if ( !pPars->fSilent && pPars->nVars <= 7 ) printf( "Generated symmetric function: %s\n", pPars->pTtStr );
         ABC_FREE( pFun );
     }
     if ( pPars->pTtStr )
         Abc_TtReadHex( pTruth, pPars->pTtStr );
     else assert( 0 );
-    assert( pPars->nVars <= 12 );
-    assert( pPars->nLutSize <= 6 );
+    assert( pPars->nVars <= 14 );
+    assert( pPars->nLutSize <= 8 );
     p = Exa7_ManAlloc( pPars, pTruth );
     if ( pTruth[0] & 1 ) { fCompl = 1; Abc_TtNot( pTruth, p->nWords ); }
     status = Exa7_ManAddCnfStart( p, pPars->fOnlyAnd );
@@ -744,19 +978,92 @@ int Exa7_ManExactSynthesis( Bmc_EsPar_t * pPars )
     if ( pPars->fVerbose && status != CADICAL_UNDEC )
         Exa7_ManPrint( p, i, iMint, Abc_Clock() - clkTotal );
     if ( iMint == -1 )
-        Exa7_ManPrintSolution( p, fCompl ), Res = 1;
+    {
+        Exa7_ManPrintSolution( p, fCompl );
+        printf( "The variable permutation is \"" );
+        Exa7_ManPrintPerm( p );
+        printf( "\".\n" );
+        if ( pPars->fDumpBlif )
+        {
+            Exa7_ManDumpBlif( p, fCompl );
+            if ( pPars->fLutCascade )
+                Exa7_ManDumpCascadeVerilog( p, fCompl );
+            else
+                Exa7_ManDumpVerilog( p, fCompl );
+        }
+        if ( p->pPars->fGenTruths ) {
+            if ( p->pPars->vTruths )
+                Vec_WrdFreeP( &p->pPars->vTruths );
+            p->pPars->vTruths = Exa7_ManSaveTruthTables( p, fCompl );
+        }
+        Res = 1;
+    }
     else if ( status == CADICAL_UNDEC )
         printf( "The solver timed out after %d sec.\n", pPars->RuntimeLim );
     else if ( !p->pPars->fSilent ) 
         printf( "The problem has no solution.\n" ), Res = 2;
     if ( !pPars->fSilent && (p->nUsed[0] || p->nUsed[1])  ) printf( "Added = %d.  Tried = %d.  ", p->nUsed[1], p->nUsed[0] );
     if ( !pPars->fSilent ) Abc_PrintTime( 1, "Total runtime", Abc_Clock() - clkTotal );
-    if ( iMint == -1 && pPars->fDumpBlif )
-        Exa7_ManDumpBlif( p, fCompl );
     if ( pPars->pSymStr ) 
         ABC_FREE( pPars->pTtStr );
     Exa7_ManFree( p );
+    ABC_FREE( pTruth );
     return Res;
+}
+
+int Exa7_ManExactSynthesisIter( Bmc_EsPar_t * pPars )
+{
+    pPars->fMinNodes = 0;
+    int nNodeMin = (pPars->nVars-2)/(pPars->nLutSize-1) + 1;
+    int nNodeMax = pPars->nNodes, Result = 0;
+    int fGenPerm = pPars->pPermStr == NULL;
+    for ( int n = nNodeMin; n <= nNodeMax; n++ ) {
+        if ( !pPars->fSilent ) printf( "\nTrying M = %d:\n", n );
+        pPars->nNodes = n;
+        if ( !pPars->fUsePerm && fGenPerm ) {
+            Vec_Str_t * vStr = Vec_StrAlloc( 100 );
+            for ( int v = 0; v < pPars->nLutSize; v++ )
+                Vec_StrPush( vStr, 'a'+v );
+            int nDupVars = Abc_MaxInt(0, (pPars->nLutSize-1) - (pPars->nVars-pPars->nLutSize));
+            Vec_StrPush( vStr, '_' );
+            for ( int v = 0; v < nDupVars; v++ )
+                Vec_StrPush( vStr, 'a'+v );
+            for ( int v = 0; v < pPars->nLutSize-1-nDupVars; v++ )
+                Vec_StrPush( vStr, '*' );
+            for ( int m = 2; m < pPars->nNodes; m++ ) {
+                Vec_StrPush( vStr, '_' );
+                for ( int v = 0; v < pPars->nLutSize-1; v++ )
+                    Vec_StrPush( vStr, '*' );
+            }
+            Vec_StrPush( vStr, '\0' );
+            ABC_FREE( pPars->pPermStr );
+            pPars->pPermStr = Vec_StrReleaseArray(vStr);
+            Vec_StrFree( vStr );
+        }
+        else if ( pPars->fUsePerm && fGenPerm ) {
+            Vec_Str_t * vStr = Vec_StrAlloc( 100 );
+            for ( int v = 0; v < pPars->nLutSize; v++ )
+                Vec_StrPush( vStr, 'a'+v );
+            for ( int m = 1; m < pPars->nNodes; m++ ) {
+                Vec_StrPush( vStr, '_' );
+                if ( m & 1 ) 
+                    for ( int v = 0; v < pPars->nLutSize-1; v++ )
+                        Vec_StrPush( vStr, 'a'+(pPars->nVars-(pPars->nLutSize-1-v)) );
+                else
+                    for ( int v = 0; v < pPars->nLutSize-1; v++ )
+                        Vec_StrPush( vStr, 'a'+v );
+            }
+            Vec_StrPush( vStr, '\0' );
+            ABC_FREE( pPars->pPermStr );
+            pPars->pPermStr = Vec_StrReleaseArray(vStr);
+            Vec_StrFree( vStr );
+        }
+        Result = Exa7_ManExactSynthesis(pPars);
+        fflush( stdout );
+        if ( Result == 1 )
+            break;
+    }
+    return Result;
 }
 
 

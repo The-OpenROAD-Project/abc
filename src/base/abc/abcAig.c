@@ -90,10 +90,10 @@ struct Abc_Aig_t_
 static unsigned Abc_HashKey2( Abc_Obj_t * p0, Abc_Obj_t * p1, int TableSize ) 
 {
     unsigned Key = 0;
-    Key ^= Abc_ObjRegular(p0)->Id * 7937;
-    Key ^= Abc_ObjRegular(p1)->Id * 2971;
-    Key ^= Abc_ObjIsComplement(p0) * 911;
-    Key ^= Abc_ObjIsComplement(p1) * 353;
+    Key ^= (unsigned)Abc_ObjRegular(p0)->Id * 7937;
+    Key ^= (unsigned)Abc_ObjRegular(p1)->Id * 2971;
+    Key ^= (unsigned)Abc_ObjIsComplement(p0) * 911;
+    Key ^= (unsigned)Abc_ObjIsComplement(p1) * 353;
     return Key % TableSize;
 }
 
@@ -905,7 +905,7 @@ void Abc_AigReplace_int( Abc_Aig_t * pMan, Abc_Obj_t * pOld, Abc_Obj_t * pNew, i
             {
                 Abc_ObjSetReverseLevel( pFanin1, Abc_ObjReverseLevel(pOld) );
                 assert( pFanin1->fMarkB == 0 );
-                if ( !Abc_ObjIsCi(pFanin1) )
+                if ( !Abc_ObjIsCi(pFanin1) && !Abc_AigNodeIsConst(pFanin1) )
                 {
                     pFanin1->fMarkB = 1;
                     Vec_VecPush( pMan->vLevelsR, Abc_ObjReverseLevel(pFanin1), pFanin1 );
@@ -1139,7 +1139,7 @@ void Abc_AigUpdateLevelR_int( Abc_Aig_t * pMan )
             // iterate through the fanins
             Abc_ObjForEachFanin( pNode, pFanin, v )
             {
-                if ( Abc_ObjIsCi(pFanin) )
+                if ( Abc_ObjIsCi(pFanin) || Abc_AigNodeIsConst(pFanin) )
                     continue;
                 // get the new reverse level of this fanin
                 LevelNew = 0;

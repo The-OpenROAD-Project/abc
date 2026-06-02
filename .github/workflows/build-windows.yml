@@ -8,7 +8,7 @@ jobs:
 
   build-windows:
 
-    runs-on: windows-2019
+    runs-on: windows-2025
 
     steps:
 
@@ -17,35 +17,61 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Process project files to compile on Github Actions
-      run: |
-        sed -i 's#ABC_USE_PTHREADS\"#ABC_DONT_USE_PTHREADS\" /D \"_ALLOW_KEYWORD_MACROS=1\"#g' *.dsp
-        awk 'BEGIN { del=0; } /# Begin Group "uap"/ { del=1; } /# End Group/ { if( del > 0 ) {del=0; next;} } del==0 {print;} ' abclib.dsp > tmp.dsp
-        copy tmp.dsp abclib.dsp
-        del tmp.dsp
-        unix2dos *.dsp
-
-    - name: Prepare MSVC
-      uses: bus1/cabuild/action/msdevshell@v1
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
       with:
-        architecture: x86
+        arch: x86
 
-    - name: Upgrade project files to latest Visual Studio, ignoring upgrade errors, and build
+    - name: Copy project files from scripts
       run: |
-        devenv abcspace.dsw /upgrade  ; if (-not $? ) { cat UpgradeLog.htm }
-        msbuild abcspace.sln /m /nologo /p:Configuration=Release /p:PlatformTarget=x86
+        copy .github\scripts\abcspace.sln .
+        copy .github\scripts\abcexe.vcxproj .
+
+    - name: Generate abclib.vcxproj from dsp
+      shell: powershell
+      run: |
+        # Parse source files from abclib.dsp
+        $dspContent = Get-Content "abclib.dsp" -Raw
+        $sourceFiles = [regex]::Matches($dspContent, 'SOURCE=\.\\([^\r\n]+)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+        
+        Write-Host "Found $($sourceFiles.Count) source files"
+        
+        # Build source file items
+        $sourceItems = ""
+        foreach ($src in $sourceFiles) {
+            if ($src -match '\.c$') {
+                $sourceItems += "    <ClCompile Include=`"$src`" />`r`n"
+            } elseif ($src -match '\.(cpp|cc)$') {
+                $sourceItems += "    <ClCompile Include=`"$src`" />`r`n"
+            } elseif ($src -match '\.h$') {
+                $sourceItems += "    <ClInclude Include=`"$src`" />`r`n"
+            }
+        }
+        
+        # Read template and replace placeholder
+        $template = Get-Content ".github\scripts\abclib.vcxproj.template" -Raw
+        $vcxproj = $template -replace '\{\{SOURCE_FILES\}\}', $sourceItems
+        Set-Content "abclib.vcxproj" $vcxproj -NoNewline
+        
+        Write-Host "abclib.vcxproj generated successfully"
+
+    - name: Build
+      run: |
+        msbuild abcspace.sln /m /nologo /v:m /p:Configuration=Release /p:Platform=Win32 /p:UseMultiToolTask=true
+        if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
 
     - name: Test Executable
       run: |
-        _TEST\abc.exe -c "r i10.aig; b; ps; b; rw -l; rw -lz; b; rw -lz; b; ps; cec"
+        copy lib\x86\pthreadVC2.dll _TEST\
+        .\_TEST\abc.exe -c "r i10.aig; b; ps; b; rw -l; rw -lz; b; rw -lz; b; ps; cec"
+        if ($LASTEXITCODE -ne 0) { throw "Test failed with exit code $LASTEXITCODE" }
 
     - name: Stage Executable
       run: |
-       mkdir staging
-       copy _TEST/abc.exe staging/
-       copy UpgradeLog.htm staging/
+        mkdir staging
+        copy _TEST\abc.exe staging\
 
-    - name: Upload pacakge artifact
+    - name: Upload package artifact
       uses: actions/upload-artifact@v4
       with:
         name: package-windows

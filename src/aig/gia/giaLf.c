@@ -1838,6 +1838,12 @@ static inline int Lf_ManDerivePart( Lf_Man_t * p, Gia_Man_t * pNew, Vec_Int_t * 
     }
     pTruth = Lf_CutTruth( p, pCut );
     iLit = Kit_TruthToGia( pNew, (unsigned *)pTruth, Vec_IntSize(vLeaves), vCover, vLeaves, 0 );
+    // do not create LUT in the simple case
+    if ( Abc_Lit2Var(iLit) == 0 )
+        return iLit;
+    Vec_IntForEachEntry( vLeaves, iTemp, k )
+        if ( Abc_Lit2Var(iLit) == Abc_Lit2Var(iTemp) )
+            return iLit;
     // create mapping
     Vec_IntSetEntry( vMapping, Abc_Lit2Var(iLit), Vec_IntSize(vMapping2) );
     Vec_IntPush( vMapping2, Vec_IntSize(vLeaves) );
@@ -2306,8 +2312,8 @@ Gia_Man_t * Gia_ManPerformLfMapping( Gia_Man_t * p, Jf_Par_t * pPars, int fNorma
             Gia_ManTransferTiming( pNew, p );
             p = pNew;
             // set arrival and required times
-            pPars->pTimesArr = Tim_ManGetArrTimes( (Tim_Man_t *)p->pManTime );
-            pPars->pTimesReq = Tim_ManGetReqTimes( (Tim_Man_t *)p->pManTime );
+            pPars->pTimesArr = Tim_ManGetArrTimes( (Tim_Man_t *)p->pManTime, Gia_ManRegNum(p) );
+            pPars->pTimesReq = Tim_ManGetReqTimes( (Tim_Man_t *)p->pManTime, Gia_ManRegNum(p) );
         }
         else
             p = Gia_ManDup( p );

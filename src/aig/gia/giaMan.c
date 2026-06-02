@@ -1033,15 +1033,28 @@ Vec_Int_t * Gia_ManDfsArrivals( Gia_Man_t * p, Vec_Int_t * vObjs )
     Vec_Int_t * vTimes = Vec_IntStartFull( Gia_ManObjNum(p) );
     Gia_Obj_t * pObj; int j, Entry, k, iFan;
     Vec_IntWriteEntry( vTimes, 0, 0 );
-    if ( pManTime ) 
+    if ( pManTime )
     {
         Tim_ManIncrementTravId( pManTime );
         Gia_ManForEachCi( p, pObj, j )
+        {
+            float arrTime = 0;
             if ( j < Tim_ManPiNum(pManTime) )
             {
-                float arrTime = Tim_ManGetCiArrival( pManTime, j );
+                // PIs - direct index
+                arrTime = Tim_ManGetCiArrival( pManTime, j );
                 Vec_IntWriteEntry( vTimes, Gia_ObjId(p, pObj), (int)arrTime );
             }
+            else if ( j >= Tim_ManCiNum(pManTime) - Gia_ManRegNum(p) )
+            {
+                // Flops - need to remap index: stored at Tim_ManPiNum + flop_index
+                int flopIndex = j - (Tim_ManCiNum(pManTime) - Gia_ManRegNum(p));
+                int remappedIndex = Tim_ManPiNum(pManTime) + flopIndex;
+                arrTime = Tim_ManGetCiArrival( pManTime, remappedIndex );
+                Vec_IntWriteEntry( vTimes, Gia_ObjId(p, pObj), (int)arrTime );
+            }
+            // BoxOutputs in the middle are skipped (no timing set)
+        }
     }
     else
     {
@@ -1115,17 +1128,28 @@ Vec_Int_t * Gia_ManDfsRequireds( Gia_Man_t * p, Vec_Int_t * vObjs, int ReqTime )
     Gia_Obj_t * pObj; 
     int j, Entry, k, iFan, Req;
     Vec_IntWriteEntry( vTimes, 0, 0 );
-    if ( pManTime ) 
+    if ( pManTime )
     {
-        int nCoLimit = Gia_ManCoNum(p) - Tim_ManPoNum(pManTime);
         Tim_ManIncrementTravId( pManTime );
         //Tim_ManInitPoRequiredAll( pManTime, (float)ReqTime );
         Gia_ManForEachCo( p, pObj, j )
-            if ( j >= nCoLimit )
+        {
+            if ( j < Gia_ManPoNum(p) )
             {
+                // POs - direct index works since they come first
                 Tim_ManSetCoRequired( pManTime, j, ReqTime );
                 Gia_ManDfsUpdateRequired( vTimes, Gia_ObjFaninId0p(p, pObj), ReqTime );
             }
+            else if ( j >= Gia_ManCoNum(p) - Gia_ManRegNum(p) )
+            {
+                // Flop inputs - remap index: stored at Tim_ManPoNum + flop_index
+                int flopIndex = j - (Gia_ManCoNum(p) - Gia_ManRegNum(p));
+                int remappedIndex = Tim_ManPoNum(pManTime) + flopIndex;
+                Tim_ManSetCoRequired( pManTime, remappedIndex, ReqTime );
+                Gia_ManDfsUpdateRequired( vTimes, Gia_ObjFaninId0p(p, pObj), ReqTime );
+            }
+            // BoxInputs in the middle are skipped (no required time set)
+        }
     }
     else
     {
@@ -1866,6 +1890,72 @@ void Gia_ManDumpIoList( Gia_Man_t * p, FILE * pFile, int fOuts, int fReverse )
         Vec_IntFree( vArray );            
     }
 }
+static Vec_Bit_t * Gia_ManCollectMultiBits( Vec_Ptr_t * vNames, int n )
+{
+    Vec_Bit_t * vBits = Vec_BitStart( n );
+    if ( n == 0 )
+        return vBits;
+    if ( vNames == NULL )
+    {
+        if ( n > 1 )
+        {
+            int i;
+            for ( i = 0; i < n; i++ )
+                Vec_BitWriteEntry( vBits, i, 1 );
+        }
+        return vBits;
+    }
+    {
+        Vec_Int_t * vArray = Gia_ManCountSymbsAll( vNames );
+        int iName, Size, i;
+        int nNames = Vec_PtrSize( vNames );
+        Vec_IntForEachEntryDouble( vArray, iName, Size, i )
+        {
+            int iNameNext = Vec_IntSize(vArray) > i+2 ? Vec_IntEntry(vArray, i+2) : nNames;
+            int k;
+            if ( iNameNext - iName <= 1 )
+                continue;
+            for ( k = iName; k < iNameNext && k < n; k++ )
+                Vec_BitWriteEntry( vBits, k, 1 );
+        }
+        Vec_IntFree( vArray );
+    }
+    return vBits;
+}
+static int Gia_ManDumpIoListMulti( Gia_Man_t * p, FILE * pFile, int fOuts, int fReverse )
+{
+    Vec_Ptr_t * vNames = fOuts ? p->vNamesOut : p->vNamesIn;
+    int nNames = vNames ? Vec_PtrSize(vNames) : (fOuts ? Gia_ManCoNum(p) : Gia_ManCiNum(p));
+    if ( vNames == NULL )
+    {
+        if ( nNames > 1 )
+        {
+            fprintf( pFile, "_%c_", fOuts ? 'o' : 'i' );
+            return 1;
+        }
+        return 0;
+    }
+    {
+        Vec_Int_t * vArray = Gia_ManCountSymbsAll( vNames );
+        int nGroups = Vec_IntSize(vArray) / 2;
+        int idx, fFirst = 1;
+        for ( idx = 0; idx < nGroups; idx++ )
+        {
+            int g = fReverse ? (nGroups - 1 - idx) : idx;
+            int iName = Vec_IntEntry(vArray, 2*g);
+            int Size = Vec_IntEntry(vArray, 2*g + 1);
+            int iNameNext = (g + 1 < nGroups) ? Vec_IntEntry(vArray, 2*(g + 1)) : nNames;
+            if ( iNameNext - iName <= 1 )
+                continue;
+            if ( !fFirst )
+                fprintf( pFile, ", " );
+            Gia_ManPrintOneName( pFile, (char *)Vec_PtrEntry(vNames, iName), Size );
+            fFirst = 0;
+        }
+        Vec_IntFree( vArray );
+        return !fFirst;
+    }
+}
 void Gia_ManDumpIoRanges( Gia_Man_t * p, FILE * pFile, int fOuts )
 {
     Vec_Ptr_t * vNames = fOuts ? p->vNamesOut : p->vNamesIn;
@@ -1943,17 +2033,30 @@ void Gia_ManDumpInterface( Gia_Man_t * p, char * pFileName )
     Gia_ManWriteNames( pFile, 'z', Gia_ManPoNum(p), p->vNamesOut, 9, 4, NULL, 0 );
     fprintf( pFile, ";\n\n" );
 
-    fprintf( pFile, "  assign { " );
-    Gia_ManWriteNames( pFile, 'x', Gia_ManCiNum(p), p->vNamesIn, 8, 4, NULL, 1 );
-    fprintf( pFile, " } = { " );
-    Gia_ManDumpIoList( p, pFile, 0, 1 );    
-    fprintf( pFile, " };\n\n" );    
-
-    fprintf( pFile, "  assign { " );
-    Gia_ManDumpIoList( p, pFile, 1, 1 );       
-    fprintf( pFile, " } = { " );    
-    Gia_ManWriteNames( pFile, 'z', Gia_ManCoNum(p), p->vNamesOut, 9, 4, NULL, 1 );
-    fprintf( pFile, " };\n\n" );
+    {
+        Vec_Bit_t * vMultiIn = Gia_ManCollectMultiBits( p->vNamesIn, Gia_ManCiNum(p) );
+        Vec_Bit_t * vMultiOut = Gia_ManCollectMultiBits( p->vNamesOut, Gia_ManCoNum(p) );
+        int fHasMultiIn = Vec_BitCount( vMultiIn );
+        int fHasMultiOut = Vec_BitCount( vMultiOut );
+        if ( fHasMultiIn )
+        {
+            fprintf( pFile, "  assign { " );
+            Gia_ManWriteNames( pFile, 'x', Gia_ManCiNum(p), p->vNamesIn, 8, 4, vMultiIn, 1 );
+            fprintf( pFile, " } = { " );
+            Gia_ManDumpIoListMulti( p, pFile, 0, 1 );
+            fprintf( pFile, " };\n\n" );
+        }
+        if ( fHasMultiOut )
+        {
+            fprintf( pFile, "  assign { " );
+            Gia_ManDumpIoListMulti( p, pFile, 1, 1 );
+            fprintf( pFile, " } = { " );
+            Gia_ManWriteNames( pFile, 'z', Gia_ManCoNum(p), p->vNamesOut, 9, 4, vMultiOut, 1 );
+            fprintf( pFile, " };\n\n" );
+        }
+        Vec_BitFree( vMultiIn );
+        Vec_BitFree( vMultiOut );
+    }
 
     if ( Vec_BitCount(vUsed) )
     {
@@ -2054,17 +2157,30 @@ void Gia_ManDumpInterfaceAssign( Gia_Man_t * p, char * pFileName )
     Gia_ManWriteNames( pFile, 'z', Gia_ManPoNum(p), p->vNamesOut, 9, 4, NULL, 0 );
     fprintf( pFile, ";\n\n" );
 
-    fprintf( pFile, "  assign { " );
-    Gia_ManWriteNames( pFile, 'x', Gia_ManCiNum(p), p->vNamesIn, 8, 4, NULL, 1 );
-    fprintf( pFile, " } = { " );
-    Gia_ManDumpIoList( p, pFile, 0, 1 );    
-    fprintf( pFile, " };\n\n" );    
-
-    fprintf( pFile, "  assign { " );
-    Gia_ManDumpIoList( p, pFile, 1, 1 );       
-    fprintf( pFile, " } = { " );    
-    Gia_ManWriteNames( pFile, 'z', Gia_ManCoNum(p), p->vNamesOut, 9, 4, NULL, 1 );
-    fprintf( pFile, " };\n\n" );
+    {
+        Vec_Bit_t * vMultiIn = Gia_ManCollectMultiBits( p->vNamesIn, Gia_ManCiNum(p) );
+        Vec_Bit_t * vMultiOut = Gia_ManCollectMultiBits( p->vNamesOut, Gia_ManCoNum(p) );
+        int fHasMultiIn = Vec_BitCount( vMultiIn );
+        int fHasMultiOut = Vec_BitCount( vMultiOut );
+        if ( fHasMultiIn )
+        {
+            fprintf( pFile, "  assign { " );
+            Gia_ManWriteNames( pFile, 'x', Gia_ManCiNum(p), p->vNamesIn, 8, 4, vMultiIn, 1 );
+            fprintf( pFile, " } = { " );
+            Gia_ManDumpIoListMulti( p, pFile, 0, 1 );
+            fprintf( pFile, " };\n\n" );
+        }
+        if ( fHasMultiOut )
+        {
+            fprintf( pFile, "  assign { " );
+            Gia_ManDumpIoListMulti( p, pFile, 1, 1 );
+            fprintf( pFile, " } = { " );
+            Gia_ManWriteNames( pFile, 'z', Gia_ManCoNum(p), p->vNamesOut, 9, 4, vMultiOut, 1 );
+            fprintf( pFile, " };\n\n" );
+        }
+        Vec_BitFree( vMultiIn );
+        Vec_BitFree( vMultiOut );
+    }
 
     if ( Vec_BitCount(vUsed) )
     {

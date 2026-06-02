@@ -20,6 +20,7 @@
 
 #include "gia.h"
 #include "map/if/if.h"
+#include "misc/tim/tim.h"
 
 ABC_NAMESPACE_IMPL_START
 
@@ -31,6 +32,53 @@ ABC_NAMESPACE_IMPL_START
 ////////////////////////////////////////////////////////////////////////
 ///                     FUNCTION DEFINITIONS                         ///
 ////////////////////////////////////////////////////////////////////////
+
+static int Gia_ManConfig2GetBytePos( Gia_Man_t * p, int iObj, If_LibCell_t * pCellLib )
+{
+    int iLut, bytePos = 0;
+    if ( p == NULL || p->vConfigs2 == NULL || pCellLib == NULL )
+        return -1;
+    Gia_ManForEachLut( p, iLut )
+    {
+        unsigned char CellId;
+        int nRecordSize;
+        if ( bytePos >= Vec_StrSize(p->vConfigs2) )
+            return -1;
+        if ( iLut == iObj )
+            return bytePos;
+        CellId = (unsigned char)Vec_StrEntry( p->vConfigs2, bytePos );
+        if ( CellId >= IF_MAX_LUTSIZE )
+            return -1;
+        nRecordSize = pCellLib->pCellRecordSizes[CellId];
+        if ( nRecordSize <= 0 )
+            return -1;
+        bytePos += nRecordSize;
+    }
+    return -1;
+}
+int Gia_ManConfig2DerivePinDelays( Gia_Man_t * p, int iObj, If_LibCell_t * pCellLib, int * pPinDelay, int nLutSize )
+{
+    int bytePos, i, nPins;
+    unsigned char CellId;
+    if ( pCellLib == NULL || pPinDelay == NULL || nLutSize < 1 || nLutSize > 32 )
+        return 0;
+    for ( i = 0; i < nLutSize; i++ )
+        pPinDelay[i] = 1;
+    bytePos = Gia_ManConfig2GetBytePos( p, iObj, pCellLib );
+    if ( bytePos < 0 || bytePos >= Vec_StrSize(p->vConfigs2) )
+        return 0;
+    CellId = (unsigned char)Vec_StrEntry( p->vConfigs2, bytePos );
+    if ( CellId >= pCellLib->nCellNum )
+        return 0;
+    nPins = Abc_MinInt( pCellLib->nCellInputs[CellId], 9 );
+    for ( i = 0; i < nPins; i++ )
+    {
+        int v = (unsigned char)Vec_StrEntry( p->vConfigs2, bytePos + 1 + i );
+        if ( v >= 2 && v < 2 + nLutSize )
+            pPinDelay[v - 2] = Abc_MaxInt( pPinDelay[v - 2], pCellLib->pCellPinDelays[CellId][i] );
+    }
+    return 1;
+}
 
 /**Function*************************************************************
 
@@ -110,8 +158,9 @@ int Gia_LutWhereIsPin( Gia_Man_t * p, int iFanout, int iFanin, int * pPinPerm )
 float Gia_ObjComputeArrival( Gia_Man_t * p, int iObj, int fUseSorting )
 {
     If_LibLut_t * pLutLib = (If_LibLut_t *)p->pLutLib;
+    If_LibCell_t * pCellLib = (If_LibCell_t *)p->pCellLib;
     Gia_Obj_t * pObj = Gia_ManObj( p, iObj );
-    int k, iFanin, pPinPerm[32];
+    int k, iFanin, pPinPerm[32], pPinDelay[32];
     float pPinDelays[32];
     float tArrival, * pDelays;
     if ( Gia_ObjIsCi(pObj) )
@@ -120,11 +169,53 @@ float Gia_ObjComputeArrival( Gia_Man_t * p, int iObj, int fUseSorting )
         return Gia_ObjTimeArrival(p, Gia_ObjFaninId0p(p, pObj) );
     assert( Gia_ObjIsLut(p, iObj) );
     tArrival = -TIM_ETERNITY;
-    if ( pLutLib == NULL )
+    if ( pLutLib == NULL && pCellLib == NULL )
     {
         Gia_LutForEachFanin( p, iObj, iFanin, k )
             if ( tArrival < Gia_ObjTimeArrival(p, iFanin) + 1.0 )
                 tArrival = Gia_ObjTimeArrival(p, iFanin) + 1.0;
+    }
+    else if ( pCellLib )
+    {
+        // Handle cell library delays (use integer delays directly)
+        int nLutSize = Gia_ObjLutSize(p, iObj);
+        int fHaveCfg2 = Gia_ManConfig2DerivePinDelays( p, iObj, pCellLib, pPinDelay, nLutSize );
+        // Find matching cell (simple approach: use first cell with enough inputs)
+        int cellId = -1;
+        int i;
+        if ( !fHaveCfg2 )
+            for ( i = 0; i < pCellLib->nCellNum; i++ )
+                if ( pCellLib->nCellInputs[i] >= nLutSize )
+                {
+                    cellId = i;
+                    break;
+                }
+        if ( cellId >= 0 )
+        {
+            // Use cell delays as integers from the library
+            Gia_LutForEachFanin( p, iObj, iFanin, k )
+            {
+                float delay = (float)(pCellLib->pCellPinDelays[cellId][k]); // Integer delay from library
+                if ( tArrival < Gia_ObjTimeArrival(p, iFanin) + delay )
+                    tArrival = Gia_ObjTimeArrival(p, iFanin) + delay;
+            }
+        }
+        else if ( fHaveCfg2 )
+        {
+            Gia_LutForEachFanin( p, iObj, iFanin, k )
+            {
+                float delay = (float)pPinDelay[k];
+                if ( tArrival < Gia_ObjTimeArrival(p, iFanin) + delay )
+                    tArrival = Gia_ObjTimeArrival(p, iFanin) + delay;
+            }
+        }
+        else
+        {
+            // Fall back to default delay if no matching cell
+            Gia_LutForEachFanin( p, iObj, iFanin, k )
+                if ( tArrival < Gia_ObjTimeArrival(p, iFanin) + 100.0 )
+                    tArrival = Gia_ObjTimeArrival(p, iFanin) + 100.0;
+        }
     }
     else if ( !pLutLib->fVarPinDelays )
     {
@@ -170,17 +261,65 @@ float Gia_ObjComputeArrival( Gia_Man_t * p, int iObj, int fUseSorting )
 float Gia_ObjPropagateRequired( Gia_Man_t * p, int iObj, int fUseSorting )
 {
     If_LibLut_t * pLutLib = (If_LibLut_t *)p->pLutLib;
-    int k, iFanin, pPinPerm[32];
+    If_LibCell_t * pCellLib = (If_LibCell_t *)p->pCellLib;
+    int k, iFanin, pPinPerm[32], pPinDelay[32];
     float pPinDelays[32];
     float tRequired = 0.0; // Suppress "might be used uninitialized"
     float * pDelays;
     assert( Gia_ObjIsLut(p, iObj) );
-    if ( pLutLib == NULL )
+    // Infinity propagates unchanged
+    if ( Gia_ObjTimeRequired( p, iObj ) >= TIM_ETERNITY )
+        return TIM_ETERNITY;
+    if ( pLutLib == NULL && pCellLib == NULL )
     {
         tRequired = Gia_ObjTimeRequired( p, iObj) - (float)1.0;
         Gia_LutForEachFanin( p, iObj, iFanin, k )
             if ( Gia_ObjTimeRequired(p, iFanin) > tRequired )
                 Gia_ObjSetTimeRequired( p, iFanin, tRequired );
+    }
+    else if ( pCellLib )
+    {
+        // Handle cell library delays (use integer delays directly)
+        int nLutSize = Gia_ObjLutSize(p, iObj);
+        int fHaveCfg2 = Gia_ManConfig2DerivePinDelays( p, iObj, pCellLib, pPinDelay, nLutSize );
+        // Find matching cell (simple approach: use first cell with enough inputs)
+        int cellId = -1;
+        int i;
+        if ( !fHaveCfg2 )
+            for ( i = 0; i < pCellLib->nCellNum; i++ )
+                if ( pCellLib->nCellInputs[i] >= nLutSize )
+                {
+                    cellId = i;
+                    break;
+                }
+        if ( cellId >= 0 )
+        {
+            // Use cell delays as integers from the library
+            Gia_LutForEachFanin( p, iObj, iFanin, k )
+            {
+                float delay = (float)(pCellLib->pCellPinDelays[cellId][k]); // Integer delay from library
+                tRequired = Gia_ObjTimeRequired( p, iObj) - delay;
+                if ( Gia_ObjTimeRequired(p, iFanin) > tRequired )
+                    Gia_ObjSetTimeRequired( p, iFanin, tRequired );
+            }
+        }
+        else if ( fHaveCfg2 )
+        {
+            Gia_LutForEachFanin( p, iObj, iFanin, k )
+            {
+                tRequired = Gia_ObjTimeRequired( p, iObj ) - (float)pPinDelay[k];
+                if ( Gia_ObjTimeRequired(p, iFanin) > tRequired )
+                    Gia_ObjSetTimeRequired( p, iFanin, tRequired );
+            }
+        }
+        else
+        {
+            // Fall back to default delay if no matching cell
+            tRequired = Gia_ObjTimeRequired( p, iObj) - 100.0;
+            Gia_LutForEachFanin( p, iObj, iFanin, k )
+                if ( Gia_ObjTimeRequired(p, iFanin) > tRequired )
+                    Gia_ObjSetTimeRequired( p, iFanin, tRequired );
+        }
     }
     else if ( !pLutLib->fVarPinDelays )
     {
@@ -266,6 +405,32 @@ float Gia_ManDelayTraceLut( Gia_Man_t * p )
         Gia_ObjSetTimeArrival( p, i, tArrival );
     }
 
+    // update levels of box output CIs to reflect box structure
+    // (Gia_ManLevelNum assigns level 0 to all CIs, but box output CIs
+    // need higher levels so that Gia_ManOrderReverse processes them
+    // before box input COs during the backward required-time pass)
+    if ( p->pManTime )
+    {
+        Tim_Man_t * pManTime = (Tim_Man_t *)p->pManTime;
+        int iBox, nBoxes = Tim_ManBoxNum( pManTime );
+        for ( iBox = 0; iBox < nBoxes; iBox++ )
+        {
+            int nIns  = Tim_ManBoxInputNum( pManTime, iBox );
+            int nOuts = Tim_ManBoxOutputNum( pManTime, iBox );
+            int iCoFirst = Tim_ManBoxInputFirst( pManTime, iBox );
+            int iCiFirst = Tim_ManBoxOutputFirst( pManTime, iBox );
+            int j, maxLevel = 0;
+            for ( j = 0; j < nIns; j++ )
+            {
+                int coLevel = Gia_ObjLevel( p, Gia_ObjFanin0(Gia_ManCo(p, iCoFirst + j)) );
+                if ( coLevel > maxLevel )
+                    maxLevel = coLevel;
+            }
+            for ( j = 0; j < nOuts; j++ )
+                Gia_ObjSetLevel( p, Gia_ManCi(p, iCiFirst + j), maxLevel + 1 );
+        }
+    }
+
     // get the latest arrival times
     tArrival = -TIM_ETERNITY;
     Gia_ManForEachCo( p, pObj, i )
@@ -314,9 +479,11 @@ float Gia_ManDelayTraceLut( Gia_Man_t * p )
         }
 
         // set slack for this object
-        tSlack = Gia_ObjTimeRequired(p, iObj) - Gia_ObjTimeArrival(p, iObj);
-        assert( tSlack + 0.01 > 0.0 );
-        Gia_ObjSetTimeSlack( p, iObj, tSlack < 0.0 ? 0.0 : tSlack );
+        if ( Gia_ObjTimeRequired(p, iObj) >= TIM_ETERNITY )
+            tSlack = TIM_ETERNITY;
+        else
+            tSlack = Gia_ObjTimeRequired(p, iObj) - Gia_ObjTimeArrival(p, iObj);
+        Gia_ObjSetTimeSlack( p, iObj, tSlack );
     }
     Vec_IntFree( vObjs );
     return tArrival;
@@ -441,20 +608,44 @@ int Gia_LutVerifyTiming(  Gia_Man_t * p )
   SeeAlso     []
 
 ***********************************************************************/
-float Gia_ManDelayTraceLutPrint( Gia_Man_t * p, int fVerbose )
+float Gia_ManDelayTraceLutPrintInt( Gia_Man_t * p, int fVerbose )
 {
     If_LibLut_t * pLutLib = (If_LibLut_t *)p->pLutLib;
+    If_LibCell_t * pCellLib = (If_LibCell_t *)p->pCellLib;
     int i, Nodes, * pCounters;
     float tArrival, tDelta, nSteps, Num;
-    // get the library
+    const char * pDelayModel;
+
+    // determine delay model
+    if ( pCellLib )
+        pDelayModel = "cell library";
+    else if ( pLutLib )
+        pDelayModel = "LUT library";
+    else
+        pDelayModel = "unit-delay";
+
+    // check library compatibility
     if ( pLutLib && pLutLib->LutMax < Gia_ManLutSizeMax(p) )
     {
-        printf( "The max LUT size (%d) is less than the max fanin count (%d).\n", 
+        printf( "The max LUT size (%d) is less than the max fanin count (%d).\n",
             pLutLib->LutMax, Gia_ManLutSizeMax(p) );
         return -ABC_INFINITY;
     }
+    if ( pCellLib )
+    {
+        int nMaxInputs = 0;
+        for ( i = 0; i < pCellLib->nCellNum; i++ )
+            if ( pCellLib->nCellInputs[i] > nMaxInputs )
+                nMaxInputs = pCellLib->nCellInputs[i];
+        if ( nMaxInputs < Gia_ManLutSizeMax(p) )
+        {
+            printf( "The max cell inputs (%d) is less than the max fanin count (%d).\n",
+                nMaxInputs, Gia_ManLutSizeMax(p) );
+            return -ABC_INFINITY;
+        }
+    }
     // decide how many steps
-    nSteps = pLutLib ? 20 : Gia_ManLutLevel(p, NULL);
+    nSteps = (pLutLib || pCellLib) ? 20 : Gia_ManLutLevel(p, NULL);
     pCounters = ABC_ALLOC( int, nSteps + 1 );
     memset( pCounters, 0, sizeof(int)*(nSteps + 1) );
     // perform delay trace
@@ -471,16 +662,19 @@ float Gia_ManDelayTraceLutPrint( Gia_Man_t * p, int fVerbose )
         assert( Num >=0 && Num <= nSteps );
         pCounters[(int)Num]++;
     }
-    // print the results    
+    // print the results
     if ( fVerbose )
     {
-        printf( "Max delay = %6.2f. Delay trace using %s model:\n", tArrival, pLutLib? "LUT library" : "unit-delay" );
+        if ( pCellLib )
+            printf( "Max delay = %d. Delay trace using %s model:\n", (int)tArrival, pDelayModel );
+        else
+            printf( "Max delay = %6.2f. Delay trace using %s model:\n", tArrival, pDelayModel );
         Nodes = 0;
         for ( i = 0; i < nSteps; i++ )
         {
             Nodes += pCounters[i];
-            printf( "%3d %s : %5d  (%6.2f %%)\n", pLutLib? 5*(i+1) : i+1, 
-                pLutLib? "%":"lev", Nodes, 100.0*Nodes/Gia_ManLutNum(p) );
+            printf( "%3d %s : %5d  (%6.2f %%)\n", (pLutLib || pCellLib)? 5*(i+1) : i+1,
+                (pLutLib || pCellLib)? "%":"lev", Nodes, 100.0*Nodes/Gia_ManLutNum(p) );
         }
     }
     ABC_FREE( pCounters );
@@ -490,10 +684,59 @@ float Gia_ManDelayTraceLutPrint( Gia_Man_t * p, int fVerbose )
 
 /**Function*************************************************************
 
+  Synopsis    [Wrapper for delay trace that handles XIAGs with boxes.]
+
+  Description [For XIAGs with boxes, unnormalizes the AIG to ensure proper
+               topological order during delay computation, similar to how
+               Gia_ManPerformMapping handles it.]
+
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+float Gia_ManDelayTraceLutPrint( Gia_Man_t * p, int fVerbose )
+{
+    float tArrival;
+    // Check if we have boxes and the AIG is normalized (like in Gia_ManPerformMapping)
+    if ( p->pManTime && Tim_ManBoxNum((Tim_Man_t*)p->pManTime) && Gia_ManIsNormalized(p) )
+    {
+        // For XIAGs with boxes, we need to unnormalize for proper topological order
+        Gia_Man_t * pTemp = Gia_ManDupUnnormalize( p );
+        if ( pTemp == NULL )
+        {
+            printf( "Failed to unnormalize AIG with boxes for delay trace.\n" );
+            return -1.0;
+        }
+
+        // Transfer timing and mapping information
+        Gia_ManTransferTiming( pTemp, p );
+        Gia_ManTransferMapping( pTemp, p );
+
+        // Transfer library pointers
+        pTemp->pLutLib = p->pLutLib;
+        pTemp->pCellLib = p->pCellLib;
+
+        // Perform delay trace on unnormalized AIG
+        tArrival = Gia_ManDelayTraceLutPrintInt( pTemp, fVerbose );
+
+        // Clean up temporary AIG
+        Gia_ManStop( pTemp );
+    }
+    else
+    {
+        // Normal case: no boxes or already unnormalized
+        tArrival = Gia_ManDelayTraceLutPrintInt( p, fVerbose );
+    }
+    return tArrival;
+}
+
+/**Function*************************************************************
+
   Synopsis    [Determines timing-critical edges of the node.]
 
   Description []
-               
+
   SideEffects []
 
   SeeAlso     []
@@ -803,4 +1046,3 @@ Gia_Man_t * Gia_ManSpeedup( Gia_Man_t * p, int Percentage, int Degree, int fVerb
 
 
 ABC_NAMESPACE_IMPL_END
-

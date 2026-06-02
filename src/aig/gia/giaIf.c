@@ -1190,7 +1190,7 @@ int Gia_ManFromIfLogicCreateLutSpecialJ( Gia_Man_t * pNew, word * pRes, Vec_Int_
 {
     word Truth;
     int i, iObjLit1, iObjLit2, iObjLit3;
-    word z = If_CutPerformDeriveJ( NULL, (unsigned *)pRes, Vec_IntSize(vLeaves), Vec_IntSize(vLeaves), NULL, 1 );
+    word z = If_CutPerformDeriveJ( NULL, (unsigned *)pRes, Vec_IntSize(vLeaves), Vec_IntSize(vLeaves), NULL, 1, 0 );
     assert( z != 0 );
     if ( ((z >> 63) & 1) == 0 )
     {   
@@ -2124,6 +2124,24 @@ void Gia_ManConfigPrint2( unsigned char * pConfigData, int nLeaves )
     }
 }
 
+static inline word Gia_ManFromIfPermuteTruth4( word Truth, int nLeaves, word z )
+{
+    word TruthNew = 0;
+    int i, k, x;
+    assert( nLeaves >= 1 && nLeaves <= 4 );
+    for ( i = 0; i < 16; i++ )
+    {
+        x = 0;
+        for ( k = 0; k < nLeaves; k++ )
+        {
+            int v = (int)((z >> (2 * k)) & 3);
+            x |= ((i >> k) & 1) << v;
+        }
+        TruthNew |= ((Truth >> x) & 1) << i;
+    }
+    return TruthNew;
+}
+
 /**Function*************************************************************
 
   Synopsis    [Derive configurations.]
@@ -2135,33 +2153,42 @@ void Gia_ManConfigPrint2( unsigned char * pConfigData, int nLeaves )
   SeeAlso     []
 
 ***********************************************************************/
-void Gia_ManFromIfGetConfig2( Vec_Str_t * vConfigs2, If_Man_t * pIfMan, word * pTruth, int nLeaves )
+void Gia_ManFromIfGetConfig2( Vec_Str_t * vConfigs2, If_Man_t * pIfMan, word * pTruth, int nLeaves, int fDelay )
 {
     int i, CellId;
     int startPos = Vec_StrSize(vConfigs2);
+    If_LibCell_t * pCellLib = pIfMan && pIfMan->pPars ? pIfMan->pPars->pCellLib : NULL;
+    assert( pCellLib != NULL );
 
     // Determine cell type based on the number of leaves and configuration
     if ( nLeaves <= 4 ) // 7 bytes = 1 byte CellId + 4 bytes mapping + 2 bytes truth table
     {
+        word z = If_CutPerformDeriveJ( pIfMan, (unsigned *)pTruth, nLeaves, nLeaves, NULL, 1, fDelay );
+        int fHavePerm = (z != 0) && ((z & ABC_CONST(0x4000000000000000)) != 0);
+        word Truth = pTruth[0];
         // Cell type 0: Simple LUT4
         CellId = 0;
         // Write CellId
         Vec_StrPush( vConfigs2, (char)CellId );
         // Write mapping
         for ( i = 0; i < nLeaves; i++ )
-            Vec_StrPush( vConfigs2, 2+i );
+        {
+            int v = fHavePerm ? (int)((z >> (2 * i)) & 3) : i;
+            Vec_StrPush( vConfigs2, 2 + v );
+        }
         for ( ; i < 4; i++ )
             Vec_StrPush( vConfigs2, 0 );
         // Write truth table (16 bits for LUT4)
-        word Truth = pTruth[0];
+        if ( fHavePerm )
+            Truth = Gia_ManFromIfPermuteTruth4( Truth, nLeaves, z );
         Vec_StrPush( vConfigs2, (char)((Truth >> 8) & 0xFF) );
         Vec_StrPush( vConfigs2, (char)(Truth & 0xFF) );
-        assert( startPos + 7 == Vec_StrSize(vConfigs2) );
+        assert( startPos + pCellLib->pCellRecordSizes[CellId] == Vec_StrSize(vConfigs2) );
         //Gia_ManConfigPrint( Truth, 0, nLeaves );
     }
     else // 12 bytes = 1 byte CellId + 7 bytes mapping + 4 bytes truth tables
     {
-        word z = If_CutPerformDeriveJ( pIfMan, (unsigned *)pTruth, nLeaves, nLeaves, NULL, 1 );
+        word z = If_CutPerformDeriveJ( pIfMan, (unsigned *)pTruth, nLeaves, nLeaves, NULL, 1, fDelay );
         //Gia_ManConfigPrint( 0, z, nLeaves );
         if ( ((z >> 63) & 1) == 0 )
         {
@@ -2201,7 +2228,7 @@ void Gia_ManFromIfGetConfig2( Vec_Str_t * vConfigs2, If_Man_t * pIfMan, word * p
             Vec_StrPush( vConfigs2, (char)(Truth1 & 0xFF) );
             Vec_StrPush( vConfigs2, (char)((Truth2 >> 8) & 0xFF) );
             Vec_StrPush( vConfigs2, (char)(Truth2 & 0xFF) );
-            assert( startPos + 12 == Vec_StrSize(vConfigs2) );
+            assert( startPos + pCellLib->pCellRecordSizes[CellId] == Vec_StrSize(vConfigs2) );
         }
         else // 14 bytes = 1 byte CellId + 9 bytes mapping + 4 bytes truth tables
         {
@@ -2226,7 +2253,7 @@ void Gia_ManFromIfGetConfig2( Vec_Str_t * vConfigs2, If_Man_t * pIfMan, word * p
             Vec_StrPush( vConfigs2, (char)(Truth1 & 0xFF) );
             Vec_StrPush( vConfigs2, (char)((Truth2 >> 8) & 0xFF) );
             Vec_StrPush( vConfigs2, (char)(Truth2 & 0xFF) );
-            assert( startPos + 14 == Vec_StrSize(vConfigs2) );
+            assert( startPos + pCellLib->pCellRecordSizes[CellId] == Vec_StrSize(vConfigs2) );
         }
     }
     if ( pIfMan->pPars->fVerboseTrace ) 
@@ -2551,7 +2578,16 @@ Gia_Man_t * Gia_ManFromIfLogic( If_Man_t * pIfMan )
                             Abc_TtFlip( pTruth, Abc_TtWordNum(pCutBest->nLeaves), k );
                     if ( Abc_LitIsCompl(pIfObj->iCopy) ^ pCutBest->fCompl )
                         Abc_TtNot( pTruth, Abc_TtWordNum(pCutBest->nLeaves) );
-                    Gia_ManFromIfGetConfig2( vConfigs2, pIfMan, pTruth, pCutBest->nLeaves );
+                    if ( pIfMan->pPars->fDelayOptCell )
+                    {
+                        pIfMan->nCutLeavesCur = pCutBest->nLeaves;
+                        If_CutForEachLeaf( pIfMan, pCutBest, pIfLeaf, k )
+                        {
+                            pIfMan->pCutLeavesCur[k] = pIfLeaf->Id;
+                            pIfMan->pCutLeafArrCur[k] = If_ObjCutBest(pIfLeaf)->Delay;
+                        }
+                    }
+                    Gia_ManFromIfGetConfig2( vConfigs2, pIfMan, pTruth, pCutBest->nLeaves, pIfMan->pPars->fDelayOptCell );
                 }
             }
             else
@@ -2842,11 +2878,12 @@ void Gia_ManTransferTiming( Gia_Man_t * p, Gia_Man_t * pGia )
     }
     if ( pGia->pManTime == NULL )
         return;
-    p->pManTime    = pGia->pManTime;    pGia->pManTime    = NULL;
-    p->pAigExtra   = pGia->pAigExtra;   pGia->pAigExtra   = NULL;
-    p->vRegClasses = pGia->vRegClasses; pGia->vRegClasses = NULL;
-    p->vRegInits   = pGia->vRegInits;   pGia->vRegInits = NULL;
-    p->nAnd2Delay  = pGia->nAnd2Delay;  pGia->nAnd2Delay  = 0;
+    p->pManTime     = pGia->pManTime;     pGia->pManTime     = NULL;
+    p->pAigExtra    = pGia->pAigExtra;    pGia->pAigExtra    = NULL;
+    p->vRegClasses  = pGia->vRegClasses;  pGia->vRegClasses  = NULL;
+    p->vRegInits    = pGia->vRegInits;    pGia->vRegInits    = NULL;
+    p->vFlopClasses = pGia->vFlopClasses; pGia->vFlopClasses = NULL;
+    p->nAnd2Delay   = pGia->nAnd2Delay;   pGia->nAnd2Delay   = 0;
 }
 
 /**Function*************************************************************
@@ -2963,6 +3000,30 @@ Gia_Man_t * Gia_ManPerformMappingInt( Gia_Man_t * p, If_Par_t * pPars )
             pPars->pTimesReq[i] = EntryF;
     }
 */
+    if ( p->pManTime && pPars->pTimesArr == NULL )
+    {
+        Tim_Man_t * pManTime = (Tim_Man_t *)p->pManTime;
+        pPars->pTimesArr = ABC_CALLOC( float, Gia_ManCiNum(p) );
+        for ( i = 0; i < Gia_ManCiNum(p); i++ )
+            pPars->pTimesArr[i] = Tim_ManGetCiArrival( pManTime, i );
+    }
+    if ( p->pManTime && pPars->pTimesReq == NULL )
+    {
+        Tim_Man_t * pManTime = (Tim_Man_t *)p->pManTime;
+        int fHasFiniteReq = 0;
+        for ( i = 0; i < Gia_ManCoNum(p); i++ )
+            if ( Tim_ManGetCoRequired( pManTime, i ) < TIM_ETERNITY )
+            {
+                fHasFiniteReq = 1;
+                break;
+            }
+        if ( fHasFiniteReq )
+        {
+            pPars->pTimesReq = ABC_CALLOC( float, Gia_ManCoNum(p) );
+            for ( i = 0; i < Gia_ManCoNum(p); i++ )
+                pPars->pTimesReq[i] = Tim_ManGetCoRequired( pManTime, i );
+        }
+    }
     ABC_FREE( p->pCellStr );
     Vec_IntFreeP( &p->vConfigs );
     Vec_StrFreeP( &p->vConfigs2 );
@@ -3250,6 +3311,85 @@ Gia_Man_t * Gia_ManDupHashMapping( Gia_Man_t * p )
     return pNew;
 }
 
+/**Function*************************************************************
+
+  Synopsis    [Uniqifies AIG nodes within each mapped cut.]
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     [] 
+
+***********************************************************************/
+void Gia_ManDupCollectedCutNodes_rec( Gia_Man_t * p, int iLut, Vec_Int_t * vNodes )
+{
+    if ( Gia_ObjUpdateTravIdCurrentId(p, iLut) )
+        return;
+    Gia_ManDupCollectedCutNodes_rec( p, Gia_ObjFaninId0p(p, Gia_ManObj(p, iLut)), vNodes );
+    Gia_ManDupCollectedCutNodes_rec( p, Gia_ObjFaninId1p(p, Gia_ManObj(p, iLut)), vNodes );
+    Vec_IntPush( vNodes, iLut );
+}
+void Gia_ManDupCollectedCutNodes( Gia_Man_t * p, int iLut, Vec_Int_t * vNodes )
+{
+    Gia_ManIncrementTravId(p);
+    Vec_IntClear( vNodes );
+    int k, iFan;
+    Gia_LutForEachFanin( p, iLut, iFan, k )
+        Gia_ObjSetTravIdCurrentId(p, iFan);
+    assert( !Gia_ObjIsTravIdCurrentId(p, iLut) );
+    Gia_ManDupCollectedCutNodes_rec( p, iLut, vNodes );
+    assert( Gia_ObjIsTravIdCurrentId(p, iLut) );
+}
+Gia_Man_t * Gia_ManDupUnhashMapping( Gia_Man_t * p )
+{
+    Gia_Man_t * pNew; 
+    Vec_Int_t * vMapping; 
+    Gia_Obj_t * pObj, * pFanin;
+    Vec_Int_t * vNodes = Vec_IntAlloc( 100 );
+    Vec_Int_t * vMap = Vec_IntStart( Gia_ManObjNum(p) );
+    int i, k, iTempLit;
+    assert( Gia_ManHasMapping(p) );
+    // copy the old manager with hashing
+    pNew = Gia_ManStart( Gia_ManObjNum(p) );
+    pNew->pName = Abc_UtilStrsav( p->pName );
+    pNew->pSpec = Abc_UtilStrsav( p->pSpec );
+    Gia_ManFillValue( p );
+    Gia_ManConst0(p)->Value = 0;
+    Gia_ManForEachCi( p, pObj, i )
+        pObj->Value = Gia_ManAppendCi( pNew );
+    Gia_ManForEachLut( p, i )
+    {
+        Gia_ManDupCollectedCutNodes( p, i, vNodes );        
+        Gia_ManForEachObjVec( vNodes, p, pObj, k )
+            Vec_IntWriteEntry( vMap, Gia_ObjId(p, pObj), pObj->Value );
+        Gia_ManForEachObjVec( vNodes, p, pObj, k )
+            pObj->Value = Gia_ManAppendAnd2( pNew, Gia_ObjFanin0Copy(pObj), Gia_ObjFanin1Copy(pObj) );
+        iTempLit = Gia_ManObj(p, i)->Value;
+        Gia_ManForEachObjVec( vNodes, p, pObj, k )
+            pObj->Value = Vec_IntEntry( vMap, Gia_ObjId(p, pObj) );
+        Gia_ManObj(p, i)->Value = iTempLit;
+    }
+    Gia_ManForEachCo( p, pObj, i )
+        Gia_ManAppendCo( pNew, Gia_ObjFanin0Copy(pObj) );
+    Gia_ManSetRegNum( pNew, Gia_ManRegNum(p) );
+    // recreate mapping
+    vMapping = Vec_IntAlloc( Vec_IntSize(p->vMapping) );
+    Vec_IntFill( vMapping, Gia_ManObjNum(pNew), 0 );
+    Gia_ManForEachLut( p, i )
+    {
+        pObj = Gia_ManObj( p, i );
+        Vec_IntWriteEntry( vMapping, Abc_Lit2Var(pObj->Value), Vec_IntSize(vMapping) );
+        Vec_IntPush( vMapping, Gia_ObjLutSize(p, i) );
+        Gia_LutForEachFaninObj( p, i, pFanin, k )
+            Vec_IntPush( vMapping, Abc_Lit2Var(pFanin->Value)  );
+        Vec_IntPush( vMapping, Abc_Lit2Var(pObj->Value) );
+    }
+    Vec_IntFree( vMap );
+    pNew->vMapping = vMapping;
+    return pNew;
+}
+
 
 ////////////////////////////////////////////////////////////////////////
 ///                       END OF FILE                                ///
@@ -3257,4 +3397,3 @@ Gia_Man_t * Gia_ManDupHashMapping( Gia_Man_t * p )
 
 
 ABC_NAMESPACE_IMPL_END
-

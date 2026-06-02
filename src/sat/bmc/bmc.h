@@ -68,17 +68,23 @@ struct Bmc_EsPar_t_
     int        fLutCascade;
     int        fLutInFixed;
     int        fMinNodes;
+    int        fUsePerm;
     int        RuntimeLim;
     int        nRandFuncs;
     int        nMintNum;
     int        Seed;
+    int        n1HotAlgo;
     int        fDumpBlif;
+    int        fGenTruths;
     int        fVerbose; 
     int        fSilent; 
     char *     pTtStr;
     char *     pSymStr;
     char *     pPermStr;
     char *     pGuide;
+    int *      pPermFans;
+    int *      pSolFans;
+    Vec_Wrd_t* vTruths;
 };
 
 static inline void Bmc_EsParSetDefault( Bmc_EsPar_t * pPars )
@@ -101,6 +107,7 @@ static inline void Bmc_EsParSetDefault( Bmc_EsPar_t * pPars )
     pPars->fUniqFans   = 0;
     pPars->fLutCascade = 0;
     pPars->RuntimeLim  = 0;
+    pPars->n1HotAlgo   = 1;
     pPars->fVerbose    = 0; 
 }
 
@@ -129,6 +136,7 @@ struct Saig_ParBmc_t_
     int         fNoRestarts;    // disables periodic restarts
     int         fUseSatoko;     // enables using Satoko
     int         fUseGlucose;    // enables using Glucose 3.0
+    int         fUseCadical;    // enables using CaDiCaL
     int         nLearnedStart;  // starting learned clause limit
     int         nLearnedDelta;  // delta of learned clause limit
     int         nLearnedPerce;  // ratio of learned clause limit
@@ -143,6 +151,8 @@ struct Saig_ParBmc_t_
     int(*pFuncOnFail)(int,Abc_Cex_t*); // called for a failed output in MO mode
     int         RunId;          // BMC id in this run 
     int(*pFuncStop)(int);       // callback to terminate
+    int(*pFuncProgress)(void *, int, unsigned); // progress/termination callback
+    void *      pProgress;      // progress callback data
 };
 
  
@@ -168,7 +178,9 @@ struct Bmc_AndPar_t_
     int         iFrame;         // explored up to this frame
     int         nFailOuts;      // the number of failed outputs
     int         nDropOuts;      // the number of dropped outputs
-    
+
+    int(*pFuncProgress)(void *, int, unsigned); // progress/termination callback
+    void *      pProgress;      // progress callback data
     void (*pFuncOnFrameDone)(int, int, int); // callback on each frame status (frame, po, statuss)
 };
   
@@ -273,4 +285,3 @@ ABC_NAMESPACE_HEADER_END
 ////////////////////////////////////////////////////////////////////////
 ///                       END OF FILE                                ///
 ////////////////////////////////////////////////////////////////////////
-

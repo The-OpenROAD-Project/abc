@@ -407,6 +407,8 @@ p->timeReduce += Abc_Clock() - clk;
     p->iNodeStart = 0;
     Aig_ManForEachObj( p->pAig, pObj, i )
     {
+        if ( Ssw_ManCallbackStop(p) )
+            break;
         if ( p->iNodeStart == 0 )
             p->iNodeStart = i;
         if ( p->pPars->fVerbose )

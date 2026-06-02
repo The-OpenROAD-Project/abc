@@ -93,6 +93,7 @@ static int IoCommandWriteTruths ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteStatus ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteSmv    ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteJson   ( Abc_Frame_t * pAbc, int argc, char **argv );
+static int IoCommandWriteJsonC  ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteResub  ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteMM     ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteMMGia  ( Abc_Frame_t * pAbc, int argc, char **argv );
@@ -176,6 +177,7 @@ void Io_Init( Abc_Frame_t * pAbc )
     Cmd_CommandAdd( pAbc, "I/O", "write_status",  IoCommandWriteStatus,  0 );
     Cmd_CommandAdd( pAbc, "I/O", "write_smv",     IoCommandWriteSmv,     0 );
     Cmd_CommandAdd( pAbc, "I/O", "write_json",    IoCommandWriteJson,    0 );
+    Cmd_CommandAdd( pAbc, "I/O", "write_jsonc",   IoCommandWriteJsonC,   0 );
     Cmd_CommandAdd( pAbc, "I/O", "&write_resub",  IoCommandWriteResub,   0 );
     Cmd_CommandAdd( pAbc, "I/O", "write_mm",      IoCommandWriteMM,      0 );
     Cmd_CommandAdd( pAbc, "I/O", "&write_mm",     IoCommandWriteMMGia,   0 );
@@ -1888,7 +1890,8 @@ usage:
 ***********************************************************************/
 int IoCommandReadJsonc( Abc_Frame_t * pAbc, int argc, char ** argv )
 {
-    extern int Jsonc_ReadTest( char * pFileName );
+    extern Abc_Ntk_t * Jsonc_ReadNetwork( char * pFileName );
+    Abc_Ntk_t * pNtk;
     char * pFileName;
     FILE * pFile;
     int c;
@@ -1918,7 +1921,11 @@ int IoCommandReadJsonc( Abc_Frame_t * pAbc, int argc, char ** argv )
     }
     fclose( pFile );
 
-    Jsonc_ReadTest( pFileName );
+    pNtk = Jsonc_ReadNetwork( pFileName );
+    if ( pNtk == NULL )
+        return 1;
+    Abc_FrameReplaceCurrentNetwork( pAbc, pNtk );
+    Abc_FrameClearVerifStatus( pAbc );
     return 0;
 
 usage:
@@ -4200,7 +4207,7 @@ int IoCommandWriteTruths( Abc_Frame_t * pAbc, int argc, char **argv )
     if ( pAbc->pGia == NULL )
     {
         Abc_Print( -1, "IoCommandWriteTruths(): There is no AIG.\n" );
-        return 1;
+        return 0;
     } 
     if ( Gia_ManPiNum(pAbc->pGia) > 16 )
     {
@@ -4406,6 +4413,54 @@ usage:
   SeeAlso     []
 
 ***********************************************************************/
+int IoCommandWriteJsonC( Abc_Frame_t * pAbc, int argc, char **argv )
+{
+    extern void Jsonc_WriteTest( Abc_Ntk_t * p, char * pFileName );
+    Abc_Ntk_t * pNtk = Abc_FrameReadNtk(pAbc);
+    char * pFileName;
+    int c;
+
+    Extra_UtilGetoptReset();
+    while ( ( c = Extra_UtilGetopt( argc, argv, "h" ) ) != EOF )
+    {
+        switch ( c )
+        {
+            case 'h':
+                goto usage;
+            default:
+                goto usage;
+        }
+    }
+    if ( pNtk == NULL || !Abc_NtkHasMapping(pNtk) )
+    {
+        fprintf( pAbc->Out, "No curent network or network is not mapped.\n" );
+        return 0;
+    }
+    if ( argc != globalUtilOptind + 1 )
+        goto usage;
+    pFileName = argv[globalUtilOptind];
+    Jsonc_WriteTest( pNtk, pFileName );
+    return 0;
+
+usage:
+    fprintf( pAbc->Err, "usage: write_jsonc [-ch] <file>\n" );
+    fprintf( pAbc->Err, "\t         write the network in JSONC format\n" );
+    fprintf( pAbc->Err, "\t-h     : print the help message\n" );
+    fprintf( pAbc->Err, "\tfile   : the name of the file to write (extension .jsonc)\n" );
+    return 1;
+}
+
+/**Function*************************************************************
+
+  Synopsis    []
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
 int IoCommandWriteResub( Abc_Frame_t * pAbc, int argc, char **argv )
 {
     extern void Gia_ManWriteResub( Gia_Man_t * p, char * pFileName );
@@ -4557,4 +4612,3 @@ usage:
 
 
 ABC_NAMESPACE_IMPL_END
-

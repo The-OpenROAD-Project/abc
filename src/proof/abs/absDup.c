@@ -303,7 +303,7 @@ void Gia_ManPrintFlopClasses( Gia_Man_t * p )
     int Counter0, Counter1;
     if ( p->vFlopClasses == NULL )
         return;
-    if ( Vec_IntSize(p->vFlopClasses) != Gia_ManRegNum(p) )
+    if ( Vec_IntSize(p->vFlopClasses) != Gia_ManRegBoxNum(p) )
     {
         printf( "Gia_ManPrintFlopClasses(): The number of flop map entries differs from the number of flops.\n" );
         return;
@@ -312,7 +312,7 @@ void Gia_ManPrintFlopClasses( Gia_Man_t * p )
     Counter1 = Vec_IntCountEntry( p->vFlopClasses, 1 );
     printf( "Flop-level abstraction:  Excluded FFs = %d  Included FFs = %d  (%.2f %%) ", 
         Counter0, Counter1, 100.0*Counter1/(Counter0 + Counter1 + 1) );
-    if ( Counter0 + Counter1 < Gia_ManRegNum(p) )
+    if ( Counter0 + Counter1 < Gia_ManRegBoxNum(p) )
         printf( "and there are other FF classes..." );
     printf( "\n" );
 }

@@ -37,7 +37,7 @@ abcext.dsp
 
 abcexe.vcproj*
 abclib.vcproj*
-abcspace.sln
+/abcspace.sln
 abcspace.suo
 
 *.pyc

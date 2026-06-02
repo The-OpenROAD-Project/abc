@@ -1576,6 +1576,8 @@ int Gia_ManPerformGla( Gia_Man_t * pAig, Abs_Par_t * pPars )
     for ( i = f = 0; !pPars->nFramesMax || f < pPars->nFramesMax; i++ )
     {
         int nAbsOld;
+        if ( pPars->pFuncStop && pPars->pFuncStop(pPars->RunId) )
+            goto finish;
         // remember the timeframe
         p->pPars->iFrame = -1;
         // create new SAT solver
@@ -1585,6 +1587,8 @@ int Gia_ManPerformGla( Gia_Man_t * pAig, Abs_Par_t * pPars )
         // unroll the circuit
         for ( f = 0; !pPars->nFramesMax || f < pPars->nFramesMax; f++ )
         {
+            if ( pPars->pFuncStop && pPars->pFuncStop(pPars->RunId) )
+                goto finish;
             // remember current limits
             int nConflsBeg = sat_solver2_nconflicts(p->pSat);
             int nAbs       = Vec_IntSize(p->vAbs);
@@ -1618,6 +1622,11 @@ int Gia_ManPerformGla( Gia_Man_t * pAig, Abs_Par_t * pPars )
             nVarsOld = p->nSatVars;
             for ( c = 0; ; c++ )
             {
+                if ( pPars->pFuncStop && pPars->pFuncStop(pPars->RunId) )
+                {
+                    Status = l_Undef;
+                    goto finish;
+                }
                 // consider the special case when the target literal is implied false
                 // by implications which happened as a result of previous refinements
                 // note that incremental UNSAT core cannot be computed because there is no learned clauses
@@ -1838,7 +1847,8 @@ int Gia_ManPerformGla( Gia_Man_t * pAig, Abs_Par_t * pPars )
         }
     }
 finish:
-    Prf_ManStopP( &p->pSat->pPrf2 );
+    if ( p->pSat )
+        Prf_ManStopP( &p->pSat->pPrf2 );
     // cancel old one if it is proving
     if ( iFrameTryToProve >= 0 )
         Gia_GlaProveCancel( pPars->fVerbose );
@@ -1851,9 +1861,9 @@ finish:
     {
         Vec_IntFreeP( &pAig->vGateClasses );
         pAig->vGateClasses = Ga2_ManAbsTranslate( p );
-        if ( p->pPars->nTimeOut && Abc_Clock() >= p->pSat->nRuntimeLimit ) 
+        if ( p->pSat && p->pPars->nTimeOut && Abc_Clock() >= p->pSat->nRuntimeLimit ) 
             Abc_Print( 1, "GLA reached timeout %d sec in frame %d with a %d-stable abstraction.    ", p->pPars->nTimeOut, p->pPars->iFrameProved+1, p->pPars->nFramesNoChange );
-        else if ( pPars->nConfLimit && sat_solver2_nconflicts(p->pSat) >= pPars->nConfLimit )
+        else if ( p->pSat && pPars->nConfLimit && sat_solver2_nconflicts(p->pSat) >= pPars->nConfLimit )
             Abc_Print( 1, "GLA exceeded %d conflicts in frame %d with a %d-stable abstraction.  ", pPars->nConfLimit, p->pPars->iFrameProved+1, p->pPars->nFramesNoChange );
         else if ( pPars->nRatioMin2 && Vec_IntSize(p->vAbs) >= p->nMarked * pPars->nRatioMin2 / 100 )
             Abc_Print( 1, "GLA found that the size of abstraction exceeds %d %% in frame %d during refinement.  ", pPars->nRatioMin2, p->pPars->iFrameProved+1 );
@@ -1884,7 +1894,8 @@ finish:
         ABC_PRTP( "Runtime: Refinement  ", p->timeCex,    Abc_Clock() - clk );
         ABC_PRTP( "Runtime: Other       ", p->timeOther,  Abc_Clock() - clk );
         ABC_PRTP( "Runtime: TOTAL       ", Abc_Clock() - clk, Abc_Clock() - clk );
-        Ga2_ManReportMemory( p );
+        if ( p->pSat )
+            Ga2_ManReportMemory( p );
     }
 //    Ga2_ManDumpStats( p->pGia, p->pPars, p->pSat, p->pPars->iFrameProved, 0 );
     Ga2_ManStop( p );
@@ -1898,4 +1909,3 @@ finish:
 
 
 ABC_NAMESPACE_IMPL_END
-

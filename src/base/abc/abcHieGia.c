@@ -19,6 +19,7 @@
 ***********************************************************************/
 
 #include "abc.h"
+#include <ctype.h>
 
 ABC_NAMESPACE_IMPL_START
 
@@ -573,10 +574,1300 @@ void Abc_NtkInsertHierarchyGia( Abc_Ntk_t * pNtk, Abc_Ntk_t * pNew, int fVerbose
                 Gia_ManInsertOne( pModel, pNew );
 }
 
+static Vec_Bit_t * GiaHie_GenUsed( Gia_Man_t * p, int fBuf )
+{
+    Gia_Obj_t * pObj; int i;
+    Vec_Bit_t * vUsed = Vec_BitStart( Gia_ManObjNum(p) );
+    Gia_ManForEachAnd( p, pObj, i )
+    {
+        if ( fBuf )
+            Vec_BitWriteEntry( vUsed, i, 1 );
+        if ( Gia_ObjFaninC0(pObj) ^ fBuf )
+            Vec_BitWriteEntry( vUsed, Gia_ObjFaninId0(pObj, i), 1 );
+        if ( Gia_ObjFaninC1(pObj) ^ fBuf )
+            Vec_BitWriteEntry( vUsed, Gia_ObjFaninId1(pObj, i), 1 );
+    }
+    Gia_ManForEachCo( p, pObj, i )
+        if ( Gia_ObjFaninC0(pObj) ^ fBuf )
+            Vec_BitWriteEntry( vUsed, Gia_ObjFaninId0p(p, pObj), 1 );
+    Vec_BitWriteEntry( vUsed, 0, 0 ); // clean zero
+    return vUsed;
+}
+static int GiaHie_NameIsLegalInVerilog( char * pName )
+{
+    // identifier ::= simple_identifier | escaped_identifier
+    // simple_identifier ::= [a-zA-Z_][a-zA-Z0-9_$]
+    // escaped_identifier ::= \ {Any_ASCII_character_except_white_space} white_space
+    // white_space ::= space | tab | newline
+    assert( pName != NULL && *pName != '\0' );
+    if ( *pName == '\\' )
+        return 1;
+    if ( (*pName < 'a' || *pName > 'z') && (*pName < 'A' || *pName > 'Z') && *pName != '_' )
+        return 0;
+    while ( *(++pName) )
+        if ( (*pName < 'a' || *pName > 'z') && (*pName < 'A' || *pName > 'Z') && (*pName < '0' || *pName > '9') && *pName != '_' && *pName != '$' ) 
+            return 0;
+    return 1;
+}
+static char * GiaHie_ObjGetDumpName( Vec_Ptr_t * vNames, char c, int i, int d )
+{
+    static char pBuffer[10000];
+    if ( vNames )
+    {
+        char * pName = (char *)Vec_PtrEntry(vNames, i);
+        if ( GiaHie_NameIsLegalInVerilog(pName) )
+            sprintf( pBuffer, "%s", pName );
+        else
+            sprintf( pBuffer, "\\%s ", pName );
+    }
+    else
+        sprintf( pBuffer, "%c%0*d%c", c, d, i, c );
+    return pBuffer;
+}
+static void GiaHie_WriteNames( FILE * pFile, char c, int n, Vec_Ptr_t * vNames, int Start, int Skip, Vec_Bit_t * vObjs, int fReverse )
+{
+    int Digits = Abc_Base10Log( n );
+    int Length = Start, i, fFirst = 1; 
+    char * pName;
+    for ( i = 0; i < n; i++ )
+    {
+        int k = fReverse ? n-1-i : i;
+        if ( vObjs && !Vec_BitEntry(vObjs, k) )
+            continue;
+        pName = GiaHie_ObjGetDumpName( vNames, c, k, Digits );
+        Length += strlen(pName) + 2;
+        if ( Length > 60 )
+        {
+            fprintf( pFile, ",\n    " );
+            Length = Skip;
+            fFirst = 1;
+        }
+        fprintf( pFile, "%s%s", fFirst ? "":", ", pName );
+        fFirst = 0;
+    }
+}
+static void GiaHie_PrintOneName( FILE * pFile, char * pName, int Size )
+{
+    int i;
+    for ( i = 0; i < Size; i++ )
+        fprintf( pFile, "%c", pName[i] );
+}
+static int GiaHie_CountSymbs( char * pName )
+{
+    int i;
+    for ( i = 0; pName[i]; i++ )
+        if ( pName[i] == '[' )
+            break;
+    return i;
+}
+static int GiaHie_ReadRangeNum( char * pName, int Size )
+{
+    if ( pName[Size] == 0 )
+        return -1;
+    assert( pName[Size] == '[' );
+    return atoi(pName+Size+1);
+}
+static Vec_Int_t * GiaHie_CountSymbsAll( Vec_Ptr_t * vNames )
+{
+    char * pNameLast = (char *)Vec_PtrEntry(vNames, 0), * pName;
+    int i, nSymbsLast = GiaHie_CountSymbs(pNameLast);
+    Vec_Int_t * vArray = Vec_IntAlloc( Vec_PtrSize(vNames) * 2 );
+    Vec_IntPush( vArray, 0 );
+    Vec_IntPush( vArray, nSymbsLast );
+    Vec_PtrForEachEntryStart( char *, vNames, pName, i, 1 )
+    {
+        int nSymbs = GiaHie_CountSymbs(pName);
+        if ( nSymbs == nSymbsLast && !strncmp(pName, pNameLast, nSymbsLast) )
+            continue;
+        Vec_IntPush( vArray, i );
+        Vec_IntPush( vArray, nSymbs );
+        pNameLast  = pName;
+        nSymbsLast = nSymbs;
+    }
+    return vArray;
+}
+static Vec_Int_t * GiaHie_CountSymbsSome( Vec_Ptr_t * vNames, int nNames )
+{
+    char * pNameLast, * pName;
+    int i, nSymbsLast;
+    Vec_Int_t * vArray;
+    assert( vNames != NULL );
+    assert( nNames >= 0 && nNames <= Vec_PtrSize(vNames) );
+    if ( nNames == 0 )
+        return Vec_IntAlloc( 0 );
+    pNameLast = (char *)Vec_PtrEntry( vNames, 0 );
+    nSymbsLast = GiaHie_CountSymbs( pNameLast );
+    vArray = Vec_IntAlloc( nNames * 2 );
+    Vec_IntPush( vArray, 0 );
+    Vec_IntPush( vArray, nSymbsLast );
+    for ( i = 1; i < nNames; i++ )
+    {
+        pName = (char *)Vec_PtrEntry( vNames, i );
+        if ( GiaHie_CountSymbs(pName) == nSymbsLast && !strncmp(pName, pNameLast, nSymbsLast) )
+            continue;
+        nSymbsLast = GiaHie_CountSymbs( pName );
+        Vec_IntPush( vArray, i );
+        Vec_IntPush( vArray, nSymbsLast );
+        pNameLast = pName;
+    }
+    return vArray;
+}
+static void GiaHie_DumpIoList( Gia_Man_t * p, FILE * pFile, int fOuts, int fReverse )
+{
+    Vec_Ptr_t * vNames = fOuts ? p->vNamesOut : p->vNamesIn;
+    if ( vNames == NULL )
+        fprintf( pFile, "_%c_", fOuts ? 'o' : 'i' );
+    else
+    {
+        Vec_Int_t * vArray = GiaHie_CountSymbsAll( vNames );
+        int iName, Size, i;
+        Vec_IntForEachEntryDouble( vArray, iName, Size, i )
+        {
+            if ( fReverse )
+            {
+                iName = Vec_IntEntry(vArray, Vec_IntSize(vArray)-2-i);
+                Size  = Vec_IntEntry(vArray, Vec_IntSize(vArray)-1-i);
+            }
+            if ( i ) fprintf( pFile, ", " );
+            GiaHie_PrintOneName( pFile, (char *)Vec_PtrEntry(vNames, iName), Size );
+        }
+        Vec_IntFree( vArray );            
+    }
+}
+static Vec_Bit_t * GiaHie_CollectMultiBits( Vec_Ptr_t * vNames, int n )
+{
+    Vec_Bit_t * vBits = Vec_BitStart( n );
+    if ( n == 0 )
+        return vBits;
+    if ( vNames == NULL )
+    {
+        if ( n > 1 )
+        {
+            int i;
+            for ( i = 0; i < n; i++ )
+                Vec_BitWriteEntry( vBits, i, 1 );
+        }
+        return vBits;
+    }
+    {
+        Vec_Int_t * vArray = GiaHie_CountSymbsAll( vNames );
+        int iName, Size, i;
+        int nNames = Vec_PtrSize( vNames );
+        Vec_IntForEachEntryDouble( vArray, iName, Size, i )
+        {
+            int iNameNext = Vec_IntSize(vArray) > i+2 ? Vec_IntEntry(vArray, i+2) : nNames;
+            int k;
+            if ( iNameNext - iName <= 1 )
+                continue;
+            for ( k = iName; k < iNameNext && k < n; k++ )
+                Vec_BitWriteEntry( vBits, k, 1 );
+        }
+        Vec_IntFree( vArray );
+    }
+    return vBits;
+}
+static int GiaHie_DumpIoListMulti( Gia_Man_t * p, FILE * pFile, int fOuts, int fReverse )
+{
+    Vec_Ptr_t * vNames = fOuts ? p->vNamesOut : p->vNamesIn;
+    int nNames = vNames ? Vec_PtrSize(vNames) : (fOuts ? Gia_ManCoNum(p) : Gia_ManCiNum(p));
+    if ( vNames == NULL )
+    {
+        if ( nNames > 1 )
+        {
+            fprintf( pFile, "_%c_", fOuts ? 'o' : 'i' );
+            return 1;
+        }
+        return 0;
+    }
+    {
+        Vec_Int_t * vArray = GiaHie_CountSymbsAll( vNames );
+        int nGroups = Vec_IntSize(vArray) / 2;
+        int idx, fFirst = 1;
+        for ( idx = 0; idx < nGroups; idx++ )
+        {
+            int g = fReverse ? (nGroups - 1 - idx) : idx;
+            int iName = Vec_IntEntry(vArray, 2*g);
+            int Size = Vec_IntEntry(vArray, 2*g + 1);
+            int iNameNext = (g + 1 < nGroups) ? Vec_IntEntry(vArray, 2*(g + 1)) : nNames;
+            if ( iNameNext - iName <= 1 )
+                continue;
+            if ( !fFirst )
+                fprintf( pFile, ", " );
+            GiaHie_PrintOneName( pFile, (char *)Vec_PtrEntry(vNames, iName), Size );
+            fFirst = 0;
+        }
+        Vec_IntFree( vArray );
+        return !fFirst;
+    }
+}
+static void GiaHie_DumpIoRanges( Gia_Man_t * p, FILE * pFile, int fOuts )
+{
+    Vec_Ptr_t * vNames = fOuts ? p->vNamesOut : p->vNamesIn;
+    if ( p->vNamesOut == NULL )
+        fprintf( pFile, "%s [%d:0] _%c_;\n", fOuts ? "output" : "input", fOuts ? Gia_ManPoNum(p)-1 : Gia_ManPiNum(p)-1, fOuts ? 'o' : 'i' );
+    else
+    {
+        Vec_Int_t * vArray = GiaHie_CountSymbsAll( vNames );
+        int iName, Size, i;
+        Vec_IntForEachEntryDouble( vArray, iName, Size, i )
+        {
+            int iNameNext    = Vec_IntSize(vArray) > i+2 ? Vec_IntEntry(vArray, i+2) : Vec_PtrSize(vNames);
+            char * pName     = (char *)Vec_PtrEntry(vNames, iName);
+            char * pNameLast = (char *)Vec_PtrEntry(vNames, iNameNext-1);
+            assert( !strncmp(pName, pNameLast, Size) );
+            int NumBeg = GiaHie_ReadRangeNum( pName,     Size );
+            int NumEnd = GiaHie_ReadRangeNum( pNameLast, Size );
+            fprintf( pFile, "  %s ", fOuts ? "output" : "input" );
+            if ( NumBeg != -1 && iName < iNameNext-1 )
+                fprintf( pFile, "[%d:%d] ", NumEnd, NumBeg );
+            GiaHie_PrintOneName( pFile, pName, Size );
+            fprintf( pFile, ";\n" );                
+        }
+        Vec_IntFree( vArray );            
+    }
+}
+static void GiaHie_DumpModuleName( FILE * pFile, char * pName )
+{
+    int i;
+    if ( pName == NULL || pName[0] == '\0' )
+    {
+        fprintf( pFile, "top" );
+        return;
+    }
+    if ( !isalpha(pName[0]) && pName[0] != '_' )
+        fprintf( pFile, "m" );
+    for ( i = 0; i < (int)strlen(pName); i++ )
+        if ( isalpha(pName[i]) || isdigit(pName[i]) || pName[i] == '_' )
+            fprintf( pFile, "%c", pName[i] );
+        else
+            fprintf( pFile, "_" );
+}
+static void GiaHie_DumpInterfaceGates( Gia_Man_t * p, char * pFileName )
+{
+    Gia_Obj_t * pObj;
+    Vec_Bit_t * vInvs, * vUsed;
+    int nDigits  = Abc_Base10Log( Gia_ManObjNum(p) );
+    int nDigitsI = Abc_Base10Log( Gia_ManPiNum(p) );
+    int nDigitsO = Abc_Base10Log( Gia_ManPoNum(p) );
+    int i;
+
+    FILE * pFile = fopen( pFileName, "wb" );
+    if ( pFile == NULL )
+    {
+        printf( "Cannot open output file \"%s\".\n", pFileName );
+        return;
+    }
+
+    vInvs = GiaHie_GenUsed( p, 0 );
+    vUsed = GiaHie_GenUsed( p, 1 );
+
+    fprintf( pFile, "module " );
+    GiaHie_DumpModuleName( pFile, p->pName );
+    fprintf( pFile, " ( " );
+    GiaHie_DumpIoList( p, pFile, 0, 0 );
+    fprintf( pFile, ", " );
+    GiaHie_DumpIoList( p, pFile, 1, 0 );    
+    fprintf( pFile, " );\n\n" );
+    GiaHie_DumpIoRanges( p, pFile, 0 );
+    GiaHie_DumpIoRanges( p, pFile, 1 );
+    fprintf( pFile, "\n" );
+
+    fprintf( pFile, "  wire " );
+    GiaHie_WriteNames( pFile, 'x', Gia_ManPiNum(p), p->vNamesIn, 8, 4, NULL, 0 );
+    fprintf( pFile, ";\n\n" );
+
+    fprintf( pFile, "  wire " );
+    GiaHie_WriteNames( pFile, 'z', Gia_ManPoNum(p), p->vNamesOut, 9, 4, NULL, 0 );
+    fprintf( pFile, ";\n\n" );
+
+    {
+        Vec_Bit_t * vMultiIn = GiaHie_CollectMultiBits( p->vNamesIn, Gia_ManCiNum(p) );
+        Vec_Bit_t * vMultiOut = GiaHie_CollectMultiBits( p->vNamesOut, Gia_ManCoNum(p) );
+        int fHasMultiIn = Vec_BitCount( vMultiIn );
+        int fHasMultiOut = Vec_BitCount( vMultiOut );
+        if ( fHasMultiIn )
+        {
+            fprintf( pFile, "  assign { " );
+            GiaHie_WriteNames( pFile, 'x', Gia_ManCiNum(p), p->vNamesIn, 8, 4, vMultiIn, 1 );
+            fprintf( pFile, " } = { " );
+            GiaHie_DumpIoListMulti( p, pFile, 0, 1 );
+            fprintf( pFile, " };\n\n" );
+        }
+        if ( fHasMultiOut )
+        {
+            fprintf( pFile, "  assign { " );
+            GiaHie_DumpIoListMulti( p, pFile, 1, 1 );
+            fprintf( pFile, " } = { " );
+            GiaHie_WriteNames( pFile, 'z', Gia_ManCoNum(p), p->vNamesOut, 9, 4, vMultiOut, 1 );
+            fprintf( pFile, " };\n\n" );
+        }
+        Vec_BitFree( vMultiIn );
+        Vec_BitFree( vMultiOut );
+    }
+
+    if ( Vec_BitCount(vUsed) )
+    {
+        fprintf( pFile, "  wire " );
+        GiaHie_WriteNames( pFile, 'n', Gia_ManObjNum(p), NULL, 7, 4, vUsed, 0 );
+        fprintf( pFile, ";\n\n" );
+    }
+
+    if ( Vec_BitCount(vInvs) )
+    {
+        fprintf( pFile, "  wire " );
+        GiaHie_WriteNames( pFile, 'i', Gia_ManObjNum(p), NULL, 7, 4, vInvs, 0 );
+        fprintf( pFile, ";\n\n" );
+    }
+
+    // input inverters
+    Gia_ManForEachCi( p, pObj, i )
+    {
+        if ( Vec_BitEntry(vUsed, Gia_ObjId(p, pObj)) )
+        {
+            fprintf( pFile, "  buf ( %s,", GiaHie_ObjGetDumpName(NULL, 'n', Gia_ObjId(p, pObj), nDigits) );
+            fprintf( pFile, " %s );\n",   GiaHie_ObjGetDumpName(p->vNamesIn, 'x', i, nDigitsI) );
+        }
+        if ( Vec_BitEntry(vInvs, Gia_ObjId(p, pObj)) )
+        {
+            fprintf( pFile, "  not ( %s,", GiaHie_ObjGetDumpName(NULL, 'i', Gia_ObjId(p, pObj), nDigits) );
+            fprintf( pFile, " %s );\n",   GiaHie_ObjGetDumpName(p->vNamesIn, 'x', i, nDigitsI) );
+        }
+    }
+
+    // internal nodes and their inverters
+    fprintf( pFile, "\n" );
+    Gia_ManForEachAnd( p, pObj, i )
+    {
+        fprintf( pFile, "  and ( %s,", GiaHie_ObjGetDumpName(NULL, 'n', i, nDigits) );
+        fprintf( pFile, " %s,",       GiaHie_ObjGetDumpName(NULL, (char)(Gia_ObjFaninC0(pObj)? 'i':'n'), Gia_ObjFaninId0(pObj, i), nDigits) );
+        fprintf( pFile, " %s );\n",   GiaHie_ObjGetDumpName(NULL, (char)(Gia_ObjFaninC1(pObj)? 'i':'n'), Gia_ObjFaninId1(pObj, i), nDigits) );
+        if ( Vec_BitEntry(vInvs, i) )
+        {
+            fprintf( pFile, "  not ( %s,", GiaHie_ObjGetDumpName(NULL, 'i', i, nDigits) );
+            fprintf( pFile, " %s );\n",   GiaHie_ObjGetDumpName(NULL, 'n', i, nDigits) );
+        }
+    }
+    
+    // output drivers
+    fprintf( pFile, "\n" );
+    Gia_ManForEachCo( p, pObj, i )
+    {
+        fprintf( pFile, "  buf ( %s, ", GiaHie_ObjGetDumpName(p->vNamesOut, 'z', i, nDigitsO) );
+        if ( Gia_ObjIsConst0(Gia_ObjFanin0(pObj)) )
+            fprintf( pFile, "1\'b%d );\n", Gia_ObjFaninC0(pObj) );
+        else 
+            fprintf( pFile, "%s );\n", GiaHie_ObjGetDumpName(NULL, (char)(Gia_ObjFaninC0(pObj)? 'i':'n'), Gia_ObjFaninId0p(p, pObj), nDigits) );
+    }
+
+    fprintf( pFile, "\nendmodule\n\n" );
+    fclose( pFile );
+
+    Vec_BitFree( vInvs );
+    Vec_BitFree( vUsed );
+}
+
+static void GiaHie_PrintObjName( FILE * pFile, int ObjId, int nDigits )
+{
+    fprintf( pFile, "n%0*d", nDigits, ObjId );
+}
+static void GiaHie_PrintObjLit( FILE * pFile, int ObjId, int fCompl, int nDigits )
+{
+    fprintf( pFile, "%c", fCompl ? '~' : ' ' );
+    GiaHie_PrintObjName( pFile, ObjId, nDigits );
+}
+static void GiaHie_WriteObjRange( FILE * pFile, Gia_Man_t * p, int iStart, int iStop, int nDigits, int Start, int Skip, int fReverse, int fCis )
+{
+    int Length = Start, i, fFirst = 1;
+    int n = iStop - iStart;
+    for ( i = 0; i < n; i++ )
+    {
+        int Idx = fReverse ? (iStop - 1 - i) : (iStart + i);
+        int ObjId = fCis ? Gia_ManCiIdToId(p, Idx) : Gia_ManCoIdToId(p, Idx);
+        char pName[64];
+        sprintf( pName, "n%0*d", nDigits, ObjId );
+        Length += strlen(pName) + 2;
+        if ( Length > 100 )
+        {
+            fprintf( pFile, ",\n    " );
+            Length = Skip;
+            fFirst = 1;
+        }
+        fprintf( pFile, "%s%s", fFirst ? "":", ", pName );
+        fFirst = 0;
+    }
+}
+static void GiaHie_WritePiPoNames( FILE * pFile, const char * pPrefix, int nBits, int nDigits, int Start, int Skip, int fReverse )
+{
+    int Length = Start, i, fFirst = 1;
+    for ( i = 0; i < nBits; i++ )
+    {
+        int Idx = fReverse ? (nBits - 1 - i) : i;
+        char pName[64];
+        sprintf( pName, "%s%0*d", pPrefix, nDigits, Idx );
+        Length += strlen(pName) + 2;
+        if ( Length > 100 )
+        {
+            fprintf( pFile, ",\n    " );
+            Length = Skip;
+            fFirst = 1;
+        }
+        fprintf( pFile, "%s%s", fFirst ? "":", ", pName );
+        fFirst = 0;
+    }
+}
+static int GiaHie_IsBitLevelNames( Vec_Ptr_t * vNames )
+{
+    int nNames, nGroups, idx;
+    Vec_Int_t * vArray;
+    if ( vNames == NULL )
+        return 1;
+    nNames = Vec_PtrSize( vNames );
+    if ( nNames == 0 )
+        return 1;
+    vArray = GiaHie_CountSymbsAll( vNames );
+    nGroups = Vec_IntSize(vArray) / 2;
+    for ( idx = 0; idx < nGroups; idx++ )
+    {
+        int iName = Vec_IntEntry(vArray, 2*idx);
+        int iNameNext = (idx + 1 < nGroups) ? Vec_IntEntry(vArray, 2*(idx + 1)) : nNames;
+        if ( iNameNext - iName > 1 )
+        {
+            Vec_IntFree( vArray );
+            return 0;
+        }
+    }
+    Vec_IntFree( vArray );
+    return 1;
+}
+static int GiaHie_IsBitLevelNamesSome( Vec_Ptr_t * vNames, int nNames )
+{
+    int nGroups, idx;
+    Vec_Int_t * vArray;
+    if ( vNames == NULL )
+        return 1;
+    if ( nNames == 0 )
+        return 1;
+    vArray = GiaHie_CountSymbsSome( vNames, nNames );
+    nGroups = Vec_IntSize(vArray) / 2;
+    for ( idx = 0; idx < nGroups; idx++ )
+    {
+        int iName = Vec_IntEntry( vArray, 2*idx );
+        int iNameNext = (idx + 1 < nGroups) ? Vec_IntEntry(vArray, 2*(idx + 1)) : nNames;
+        if ( iNameNext - iName > 1 )
+        {
+            Vec_IntFree( vArray );
+            return 0;
+        }
+    }
+    Vec_IntFree( vArray );
+    return 1;
+}
+static void GiaHie_DumpPortDeclsOneSome( Vec_Ptr_t * vNames, int nBits, FILE * pFile, int fOuts, int * pfFirst )
+{
+    int fUsePiPo = (nBits > 2) && GiaHie_IsBitLevelNamesSome( vNames, nBits );
+    if ( nBits == 0 )
+        return;
+    if ( fUsePiPo )
+    {
+        int nDigits = Abc_Base10Log( nBits );
+        if ( nDigits < 2 )
+            nDigits = 2;
+        if ( !(*pfFirst) )
+            fprintf( pFile, ",\n" );
+        fprintf( pFile, "  %s ", fOuts ? "output" : "input" );
+        GiaHie_WritePiPoNames( pFile, fOuts ? "po" : "pi", nBits, nDigits, 8, 4, 0 );
+        *pfFirst = 0;
+        return;
+    }
+    if ( vNames == NULL )
+    {
+        if ( !(*pfFirst) )
+            fprintf( pFile, ",\n" );
+        fprintf( pFile, "  %s [%d:0] _%c_", fOuts ? "output" : "input", nBits-1, fOuts ? 'o' : 'i' );
+        *pfFirst = 0;
+        return;
+    }
+    {
+        Vec_Int_t * vArray = GiaHie_CountSymbsSome( vNames, nBits );
+        int iName, Size, i;
+        Vec_IntForEachEntryDouble( vArray, iName, Size, i )
+        {
+            int iNameNext = Vec_IntSize(vArray) > i+2 ? Vec_IntEntry(vArray, i+2) : nBits;
+            char * pName = (char *)Vec_PtrEntry(vNames, iName);
+            char * pNameLast = (char *)Vec_PtrEntry(vNames, iNameNext-1);
+            int NumBeg, NumEnd;
+            assert( !strncmp(pName, pNameLast, Size) );
+            NumBeg = GiaHie_ReadRangeNum( pName, Size );
+            NumEnd = GiaHie_ReadRangeNum( pNameLast, Size );
+            if ( !(*pfFirst) )
+                fprintf( pFile, ",\n" );
+            fprintf( pFile, "  %s ", fOuts ? "output" : "input" );
+            if ( NumBeg != -1 && iName < iNameNext-1 )
+                fprintf( pFile, "[%d:%d] ", NumEnd, NumBeg );
+            GiaHie_PrintOneName( pFile, pName, Size );
+            *pfFirst = 0;
+        }
+        Vec_IntFree( vArray );
+    }
+}
+static void GiaHie_DumpPortDeclsSeq( Gia_Man_t * p, FILE * pFile, int fUseCtrlPis )
+{
+    int fFirst = fUseCtrlPis ? 1 : 0;
+    if ( !fUseCtrlPis )
+    {
+        fprintf( pFile, "  input clk,\n" );
+        fprintf( pFile, "  input rst" );
+    }
+    GiaHie_DumpPortDeclsOneSome( p->vNamesIn, Gia_ManPiNum(p), pFile, 0, &fFirst );
+    GiaHie_DumpPortDeclsOneSome( p->vNamesOut, Gia_ManPoNum(p), pFile, 1, &fFirst );
+}
+static void GiaHie_DumpPortDeclsOne( Gia_Man_t * p, FILE * pFile, int fOuts, int * pfFirst )
+{
+    Vec_Ptr_t * vNames = fOuts ? p->vNamesOut : p->vNamesIn;
+    int nBits = fOuts ? Gia_ManPoNum(p) : Gia_ManPiNum(p);
+    int fUsePiPo = (nBits > 2) && GiaHie_IsBitLevelNames( vNames );
+    if ( nBits == 0 )
+        return;
+    if ( fUsePiPo )
+    {
+        int nDigits = Abc_Base10Log( nBits );
+        if ( nDigits < 2 )
+            nDigits = 2;
+        if ( !(*pfFirst) )
+            fprintf( pFile, ",\n" );
+        fprintf( pFile, "  %s ", fOuts ? "output" : "input" );
+        GiaHie_WritePiPoNames( pFile, fOuts ? "po" : "pi", nBits, nDigits, 8, 4, 0 );
+        *pfFirst = 0;
+        return;
+    }
+    if ( vNames == NULL )
+    {
+        if ( !(*pfFirst) )
+            fprintf( pFile, ",\n" );
+        fprintf( pFile, "  %s [%d:0] _%c_", fOuts ? "output" : "input", nBits-1, fOuts ? 'o' : 'i' );
+        *pfFirst = 0;
+        return;
+    }
+    {
+        Vec_Int_t * vArray = GiaHie_CountSymbsAll( vNames );
+        int iName, Size, i;
+        Vec_IntForEachEntryDouble( vArray, iName, Size, i )
+        {
+            int iNameNext    = Vec_IntSize(vArray) > i+2 ? Vec_IntEntry(vArray, i+2) : Vec_PtrSize(vNames);
+            char * pName     = (char *)Vec_PtrEntry(vNames, iName);
+            char * pNameLast = (char *)Vec_PtrEntry(vNames, iNameNext-1);
+            assert( !strncmp(pName, pNameLast, Size) );
+            int NumBeg = GiaHie_ReadRangeNum( pName,     Size );
+            int NumEnd = GiaHie_ReadRangeNum( pNameLast, Size );
+            if ( !(*pfFirst) )
+                fprintf( pFile, ",\n" );
+            fprintf( pFile, "  %s ", fOuts ? "output" : "input" );
+            if ( NumBeg != -1 && iName < iNameNext-1 )
+                fprintf( pFile, "[%d:%d] ", NumEnd, NumBeg );
+            GiaHie_PrintOneName( pFile, pName, Size );
+            *pfFirst = 0;
+        }
+        Vec_IntFree( vArray );            
+    }
+}
+static void GiaHie_DumpPortDecls( Gia_Man_t * p, FILE * pFile )
+{
+    int fFirst = 1;
+    GiaHie_DumpPortDeclsOne( p, pFile, 0, &fFirst );
+    GiaHie_DumpPortDeclsOne( p, pFile, 1, &fFirst );
+}
+static int GiaHie_ConstUsed( Gia_Man_t * p )
+{
+    Gia_Obj_t * pObj; int i;
+    Gia_ManForEachAnd( p, pObj, i )
+        if ( Gia_ObjFaninId0(pObj, i) == 0 || Gia_ObjFaninId1(pObj, i) == 0 )
+            return 1;
+    Gia_ManForEachCo( p, pObj, i )
+        if ( Gia_ObjIsConst0(Gia_ObjFanin0(pObj)) )
+            return 1;
+    return 0;
+}
+static void GiaHie_DumpInputAssigns( Gia_Man_t * p, FILE * pFile, int nDigits )
+{
+    Vec_Ptr_t * vNames = p->vNamesIn;
+    int nCis = Gia_ManCiNum(p);
+    int fUsePiPo = (nCis > 2) && GiaHie_IsBitLevelNames( vNames );
+    if ( nCis == 0 )
+        return;
+    if ( fUsePiPo )
+    {
+        int nDigitsPi = Abc_Base10Log( nCis );
+        if ( nDigitsPi < 2 )
+            nDigitsPi = 2;
+        fprintf( pFile, "  assign { " );
+        GiaHie_WriteObjRange( pFile, p, 0, nCis, nDigits, 11, 4, 1, 1 );
+        fprintf( pFile, " } =\n    { " );
+        GiaHie_WritePiPoNames( pFile, "pi", nCis, nDigitsPi, 18, 4, 1 );
+        fprintf( pFile, " };\n" );
+        return;
+    }
+    if ( vNames == NULL )
+    {
+        if ( nCis == 1 )
+        {
+            fprintf( pFile, "  assign " );
+            GiaHie_PrintObjName( pFile, Gia_ManCiIdToId(p, 0), nDigits );
+            fprintf( pFile, " = _i_;\n" );
+        }
+        else
+        {
+            fprintf( pFile, "  assign { " );
+            GiaHie_WriteObjRange( pFile, p, 0, nCis, nDigits, 11, 4, 1, 1 );
+            fprintf( pFile, " } = { _i_ };\n" );
+        }
+        return;
+    }
+    {
+        Vec_Int_t * vArray = GiaHie_CountSymbsAll( vNames );
+        int iName, Size, i;
+        Vec_IntForEachEntryDouble( vArray, iName, Size, i )
+        {
+            int iNameNext = Vec_IntSize(vArray) > i+2 ? Vec_IntEntry(vArray, i+2) : Vec_PtrSize(vNames);
+            int nBits = iNameNext - iName;
+            char * pName = (char *)Vec_PtrEntry(vNames, iName);
+            if ( nBits > 1 )
+            {
+                fprintf( pFile, "  assign { " );
+                GiaHie_WriteObjRange( pFile, p, iName, iNameNext, nDigits, 11, 4, 1, 1 );
+                fprintf( pFile, " } =\n    { " );
+                GiaHie_PrintOneName( pFile, pName, Size );
+                fprintf( pFile, " };\n" );
+            }
+            else
+            {
+                fprintf( pFile, "  assign " );
+                GiaHie_PrintObjName( pFile, Gia_ManCiIdToId(p, iName), nDigits );
+                fprintf( pFile, " = " );
+                GiaHie_PrintOneName( pFile, pName, Size );
+                fprintf( pFile, ";\n" );
+            }
+        }
+        Vec_IntFree( vArray );
+    }
+}
+static void GiaHie_DumpOutputAssigns( Gia_Man_t * p, FILE * pFile, int nDigits )
+{
+    Vec_Ptr_t * vNames = p->vNamesOut;
+    int nCos = Gia_ManCoNum(p);
+    int fUsePiPo = (nCos > 2) && GiaHie_IsBitLevelNames( vNames );
+    if ( nCos == 0 )
+        return;
+    if ( fUsePiPo )
+    {
+        int nDigitsPo = Abc_Base10Log( nCos );
+        if ( nDigitsPo < 2 )
+            nDigitsPo = 2;
+        fprintf( pFile, "  assign { " );
+        GiaHie_WritePiPoNames( pFile, "po", nCos, nDigitsPo, 11, 4, 1 );
+        fprintf( pFile, " } =\n    { " );
+        GiaHie_WriteObjRange( pFile, p, 0, nCos, nDigits, 18, 4, 1, 0 );
+        fprintf( pFile, " };\n" );
+        return;
+    }
+    if ( vNames == NULL )
+    {
+        if ( nCos == 1 )
+        {
+            fprintf( pFile, "  assign _o_ = " );
+            GiaHie_PrintObjName( pFile, Gia_ManCoIdToId(p, 0), nDigits );
+            fprintf( pFile, ";\n" );
+        }
+        else
+        {
+            fprintf( pFile, "  assign { _o_ } = { " );
+            GiaHie_WriteObjRange( pFile, p, 0, nCos, nDigits, 18, 4, 1, 0 );
+            fprintf( pFile, " };\n" );
+        }
+        return;
+    }
+    {
+        Vec_Int_t * vArray = GiaHie_CountSymbsAll( vNames );
+        int iName, Size, i;
+        Vec_IntForEachEntryDouble( vArray, iName, Size, i )
+        {
+            int iNameNext = Vec_IntSize(vArray) > i+2 ? Vec_IntEntry(vArray, i+2) : Vec_PtrSize(vNames);
+            int nBits = iNameNext - iName;
+            char * pName = (char *)Vec_PtrEntry(vNames, iName);
+            if ( nBits > 1 )
+            {
+                fprintf( pFile, "  assign { " );
+                GiaHie_PrintOneName( pFile, pName, Size );
+                fprintf( pFile, " } =\n    { " );
+                GiaHie_WriteObjRange( pFile, p, iName, iNameNext, nDigits, 18, 4, 1, 0 );
+                fprintf( pFile, " };\n" );
+            }
+            else
+            {
+                fprintf( pFile, "  assign " );
+                GiaHie_PrintOneName( pFile, pName, Size );
+                fprintf( pFile, " = " );
+                GiaHie_PrintObjName( pFile, Gia_ManCoIdToId(p, iName), nDigits );
+                fprintf( pFile, ";\n" );
+            }
+        }
+        Vec_IntFree( vArray );
+    }
+}
+static void GiaHie_DumpInputAssignsSome( Gia_Man_t * p, FILE * pFile, int nDigits, int nCis )
+{
+    Vec_Ptr_t * vNames = p->vNamesIn;
+    int fUsePiPo = (nCis > 2) && GiaHie_IsBitLevelNamesSome( vNames, nCis );
+    if ( nCis == 0 )
+        return;
+    if ( fUsePiPo )
+    {
+        int nDigitsPi = Abc_Base10Log( nCis );
+        if ( nDigitsPi < 2 )
+            nDigitsPi = 2;
+        fprintf( pFile, "  assign { " );
+        GiaHie_WriteObjRange( pFile, p, 0, nCis, nDigits, 11, 4, 1, 1 );
+        fprintf( pFile, " } =\n    { " );
+        GiaHie_WritePiPoNames( pFile, "pi", nCis, nDigitsPi, 18, 4, 1 );
+        fprintf( pFile, " };\n" );
+        return;
+    }
+    if ( vNames == NULL )
+    {
+        if ( nCis == 1 )
+        {
+            fprintf( pFile, "  assign " );
+            GiaHie_PrintObjName( pFile, Gia_ManCiIdToId(p, 0), nDigits );
+            fprintf( pFile, " = _i_;\n" );
+        }
+        else
+        {
+            fprintf( pFile, "  assign { " );
+            GiaHie_WriteObjRange( pFile, p, 0, nCis, nDigits, 11, 4, 1, 1 );
+            fprintf( pFile, " } = { _i_ };\n" );
+        }
+        return;
+    }
+    {
+        Vec_Int_t * vArray = GiaHie_CountSymbsSome( vNames, nCis );
+        int iName, Size, i;
+        Vec_IntForEachEntryDouble( vArray, iName, Size, i )
+        {
+            int iNameNext = Vec_IntSize(vArray) > i+2 ? Vec_IntEntry(vArray, i+2) : nCis;
+            int nBits = iNameNext - iName;
+            char * pName = (char *)Vec_PtrEntry(vNames, iName);
+            if ( nBits > 1 )
+            {
+                fprintf( pFile, "  assign { " );
+                GiaHie_WriteObjRange( pFile, p, iName, iNameNext, nDigits, 11, 4, 1, 1 );
+                fprintf( pFile, " } =\n    { " );
+                GiaHie_PrintOneName( pFile, pName, Size );
+                fprintf( pFile, " };\n" );
+            }
+            else
+            {
+                fprintf( pFile, "  assign " );
+                GiaHie_PrintObjName( pFile, Gia_ManCiIdToId(p, iName), nDigits );
+                fprintf( pFile, " = " );
+                GiaHie_PrintOneName( pFile, pName, Size );
+                fprintf( pFile, ";\n" );
+            }
+        }
+        Vec_IntFree( vArray );
+    }
+}
+static void GiaHie_DumpOutputAssignsSome( Gia_Man_t * p, FILE * pFile, int nDigits, int nCos )
+{
+    Vec_Ptr_t * vNames = p->vNamesOut;
+    int fUsePiPo = (nCos > 2) && GiaHie_IsBitLevelNamesSome( vNames, nCos );
+    if ( nCos == 0 )
+        return;
+    if ( fUsePiPo )
+    {
+        int nDigitsPo = Abc_Base10Log( nCos );
+        if ( nDigitsPo < 2 )
+            nDigitsPo = 2;
+        fprintf( pFile, "  assign { " );
+        GiaHie_WritePiPoNames( pFile, "po", nCos, nDigitsPo, 11, 4, 1 );
+        fprintf( pFile, " } =\n    { " );
+        GiaHie_WriteObjRange( pFile, p, 0, nCos, nDigits, 18, 4, 1, 0 );
+        fprintf( pFile, " };\n" );
+        return;
+    }
+    if ( vNames == NULL )
+    {
+        if ( nCos == 1 )
+        {
+            fprintf( pFile, "  assign _o_ = " );
+            GiaHie_PrintObjName( pFile, Gia_ManCoIdToId(p, 0), nDigits );
+            fprintf( pFile, ";\n" );
+        }
+        else
+        {
+            fprintf( pFile, "  assign { _o_ } = { " );
+            GiaHie_WriteObjRange( pFile, p, 0, nCos, nDigits, 18, 4, 1, 0 );
+            fprintf( pFile, " };\n" );
+        }
+        return;
+    }
+    {
+        Vec_Int_t * vArray = GiaHie_CountSymbsSome( vNames, nCos );
+        int iName, Size, i;
+        Vec_IntForEachEntryDouble( vArray, iName, Size, i )
+        {
+            int iNameNext = Vec_IntSize(vArray) > i+2 ? Vec_IntEntry(vArray, i+2) : nCos;
+            int nBits = iNameNext - iName;
+            char * pName = (char *)Vec_PtrEntry(vNames, iName);
+            if ( nBits > 1 )
+            {
+                fprintf( pFile, "  assign { " );
+                GiaHie_PrintOneName( pFile, pName, Size );
+                fprintf( pFile, " } =\n    { " );
+                GiaHie_WriteObjRange( pFile, p, iName, iNameNext, nDigits, 18, 4, 1, 0 );
+                fprintf( pFile, " };\n" );
+            }
+            else
+            {
+                fprintf( pFile, "  assign " );
+                GiaHie_PrintOneName( pFile, pName, Size );
+                fprintf( pFile, " = " );
+                GiaHie_PrintObjName( pFile, Gia_ManCoIdToId(p, iName), nDigits );
+                fprintf( pFile, ";\n" );
+            }
+        }
+        Vec_IntFree( vArray );
+    }
+}
+static void GiaHie_DumpInterfaceAssignsSeq( Gia_Man_t * p, char * pFileName, int fUseCtrlPis )
+{
+    Gia_Obj_t * pObj, * pObjRi, * pObjRo;
+    int nDigits = Abc_Base10Log( Gia_ManObjNum(p) );
+    int nPerLine = 4, nOnLine = 0;
+    int i;
+    FILE * pFile;
+    if ( fUseCtrlPis && Gia_ManPiNum(p) < 2 )
+    {
+        printf( "Sequential Verilog with \"-c\" expects at least 2 primary inputs.\n" );
+        return;
+    }
+    pFile = fopen( pFileName, "wb" );
+    if ( pFile == NULL )
+    {
+        printf( "Cannot open output file \"%s\".\n", pFileName );
+        return;
+    }
+
+    fprintf( pFile, "module " );
+    GiaHie_DumpModuleName( pFile, p->pName );
+    fprintf( pFile, " (\n" );
+    GiaHie_DumpPortDeclsSeq( p, pFile, fUseCtrlPis );
+    fprintf( pFile, "\n);\n\n" );
+
+    if ( Gia_ManPiNum(p) )
+    {
+        fprintf( pFile, "  wire " );
+        GiaHie_WriteObjRange( pFile, p, 0, Gia_ManPiNum(p), nDigits, 7, 4, 0, 1 );
+        fprintf( pFile, ";\n\n" );
+        GiaHie_DumpInputAssignsSome( p, pFile, nDigits, Gia_ManPiNum(p) );
+        fprintf( pFile, "\n" );
+    }
+    if ( Gia_ManCoNum(p) )
+    {
+        fprintf( pFile, "  wire " );
+        GiaHie_WriteObjRange( pFile, p, 0, Gia_ManCoNum(p), nDigits, 7, 4, 0, 0 );
+        fprintf( pFile, ";\n\n" );
+    }
+    if ( Gia_ManRegNum(p) )
+    {
+        fprintf( pFile, "  reg  " );
+        GiaHie_WriteObjRange( pFile, p, Gia_ManPiNum(p), Gia_ManCiNum(p), nDigits, 7, 4, 0, 1 );
+        fprintf( pFile, ";\n\n" );
+    }
+
+    if ( GiaHie_ConstUsed(p) )
+        fprintf( pFile, "  wire n%0*d = 1'b0;\n\n", nDigits, 0 );
+
+    Gia_ManForEachAnd( p, pObj, i )
+    {
+        if ( nOnLine == 0 )
+            fprintf( pFile, "  " );
+        fprintf( pFile, "wire n%0*d = ", nDigits, i );
+        GiaHie_PrintObjLit( pFile, Gia_ObjFaninId0(pObj, i), Gia_ObjFaninC0(pObj), nDigits );
+        fprintf( pFile, " & " );
+        GiaHie_PrintObjLit( pFile, Gia_ObjFaninId1(pObj, i), Gia_ObjFaninC1(pObj), nDigits );
+        fprintf( pFile, "; " );
+        nOnLine++;
+        if ( nOnLine == nPerLine )
+        {
+            fprintf( pFile, "\n" );
+            nOnLine = 0;
+        }
+        else
+            fprintf( pFile, " " );
+    }
+    if ( nOnLine != 0 )
+        fprintf( pFile, "\n" );
+    if ( Gia_ManAndNum(p) )
+        fprintf( pFile, "\n" );
+
+    Gia_ManForEachCo( p, pObj, i )
+    {
+        fprintf( pFile, "  assign n%0*d = ", nDigits, Gia_ManCoIdToId(p, i) );
+        GiaHie_PrintObjLit( pFile, Gia_ObjFaninId0p(p, pObj), Gia_ObjFaninC0(pObj), nDigits );
+        fprintf( pFile, ";\n" );
+    }
+    fprintf( pFile, "\n" );
+    GiaHie_DumpOutputAssignsSome( p, pFile, nDigits, Gia_ManPoNum(p) );
+    fprintf( pFile, "\n" );
+
+    fprintf( pFile, "  always @(posedge " );
+    if ( fUseCtrlPis )
+        GiaHie_PrintObjName( pFile, Gia_ManCiIdToId(p, 0), nDigits );
+    else
+        fprintf( pFile, "clk" );
+    fprintf( pFile, ") begin\n" );
+    Gia_ManForEachRiRo( p, pObjRi, pObjRo, i )
+        fprintf( pFile, "      n%0*d <= n%0*d;\n", nDigits, Gia_ObjId(p, pObjRo), nDigits, Gia_ObjId(p, pObjRi) );
+    fprintf( pFile, "  end\n\n" );
+    fprintf( pFile, "endmodule\n\n" );
+    fclose( pFile );
+}
+
+/**Function*************************************************************
+
+  Synopsis    []
+
+  Description []
+               
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+static void GiaHie_DumpInterfaceAssigns( Gia_Man_t * p, char * pFileName, int fUseCtrlPis )
+{
+    Gia_Obj_t * pObj;
+    int nDigits = Abc_Base10Log( Gia_ManObjNum(p) );
+    int nPerLine = 4;
+    int nOnLine = 0;
+    int i;
+    if ( Gia_ManRegNum(p) > 0 )
+    {
+        GiaHie_DumpInterfaceAssignsSeq( p, pFileName, fUseCtrlPis );
+        return;
+    }
+    FILE * pFile = fopen( pFileName, "wb" );
+    if ( pFile == NULL )
+    {
+        printf( "Cannot open output file \"%s\".\n", pFileName );
+        return;
+    }
+
+    fprintf( pFile, "module " );
+    GiaHie_DumpModuleName( pFile, p->pName );
+    fprintf( pFile, " (\n" );
+    GiaHie_DumpPortDecls( p, pFile );
+    fprintf( pFile, "\n);\n\n" );
+
+    if ( Gia_ManCiNum(p) )
+    {
+        fprintf( pFile, "  wire " );
+        GiaHie_WriteObjRange( pFile, p, 0, Gia_ManCiNum(p), nDigits, 7, 4, 0, 1 );
+        fprintf( pFile, ";\n\n" );
+        GiaHie_DumpInputAssigns( p, pFile, nDigits );
+        fprintf( pFile, "\n" );
+    }
+
+    if ( Gia_ManCoNum(p) )
+    {
+        fprintf( pFile, "  wire " );
+        GiaHie_WriteObjRange( pFile, p, 0, Gia_ManCoNum(p), nDigits, 7, 4, 0, 0 );
+        fprintf( pFile, ";\n\n" );
+        GiaHie_DumpOutputAssigns( p, pFile, nDigits );
+        fprintf( pFile, "\n" );
+    }
+
+    if ( GiaHie_ConstUsed(p) )
+        fprintf( pFile, "  wire n%0*d = 1'b0;\n\n", nDigits, 0 );
+
+    Gia_ManForEachAnd( p, pObj, i )
+    {
+        if ( nOnLine == 0 )
+            fprintf( pFile, "  " );
+        fprintf( pFile, "wire n%0*d = ", nDigits, i );
+        GiaHie_PrintObjLit( pFile, Gia_ObjFaninId0(pObj, i), Gia_ObjFaninC0(pObj), nDigits );
+        fprintf( pFile, " & " );
+        GiaHie_PrintObjLit( pFile, Gia_ObjFaninId1(pObj, i), Gia_ObjFaninC1(pObj), nDigits );
+        fprintf( pFile, "; " );
+        nOnLine++;
+        if ( nOnLine == nPerLine )
+        {
+            fprintf( pFile, "\n" );
+            nOnLine = 0;
+        }
+        else
+            fprintf( pFile, " " );
+    }
+    if ( nOnLine != 0 )
+        fprintf( pFile, "\n" );
+    if ( Gia_ManAndNum(p) )
+        fprintf( pFile, "\n" );
+
+    Gia_ManForEachCo( p, pObj, i )
+    {
+        fprintf( pFile, "  assign n%0*d = ", nDigits, Gia_ManCoIdToId(p, i) );
+        GiaHie_PrintObjLit( pFile, Gia_ObjFaninId0p(p, pObj), Gia_ObjFaninC0(pObj), nDigits );
+        fprintf( pFile, ";\n" );
+    }
+
+    fprintf( pFile, "\nendmodule\n\n" );
+    fclose( pFile );
+}
+
+/**Function*************************************************************
+
+  Synopsis    [Dumps mapped AIG as LUT6 instances in Verilog]
+
+  Description []
+
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+static void GiaHie_DumpMappedLuts( Gia_Man_t * p, char * pFileName )
+{
+    int i, k, iFanin, nLutSize, nDigits;
+    FILE * pFile;
+    Vec_Int_t * vLeaves;
+    word * pTruth;
+    Gia_Obj_t * pObj;
+
+    // Check if AIG is mapped
+    if ( !Gia_ManHasMapping(p) )
+    {
+        printf( "Cannot write LUT-based Verilog because AIG is not mapped.\n" );
+        return;
+    }
+
+    pFile = fopen( pFileName, "wb" );
+    if ( pFile == NULL )
+    {
+        printf( "Cannot open output file \"%s\".\n", pFileName );
+        return;
+    }
+
+    nDigits = Abc_Base10Log( Gia_ManObjNum(p) );
+    if ( nDigits < 3 )
+        nDigits = 3;
+
+    // Write header
+    fprintf( pFile, "`timescale 1ns/1ps\n\n" );
+
+    // Write LUT module definitions for Yosys compatibility (compact version)
+    fprintf( pFile, "`ifdef LUTSPECS\n" );
+    fprintf( pFile, "module LUT2 #( parameter INIT = 04\'h0 ) ( output O, input I0, I1 );\n" );
+    fprintf( pFile, "  assign O = INIT[ {I1, I0} ];\n" );
+    fprintf( pFile, "endmodule\n" );
+
+    fprintf( pFile, "module LUT3 #( parameter INIT = 08\'h0 ) ( output O, input I0, I1, I2 );\n" );
+    fprintf( pFile, "  assign O = INIT[ {I2, I1, I0} ];\n" );
+    fprintf( pFile, "endmodule\n" );
+
+    fprintf( pFile, "module LUT4 #( parameter INIT = 16\'h0 ) ( output O, input I0, I1, I2, I3 );\n" );
+    fprintf( pFile, "  assign O = INIT[ {I3, I2, I1, I0} ];\n" );
+    fprintf( pFile, "endmodule\n" );
+
+    fprintf( pFile, "module LUT5 #( parameter INIT = 32\'h0 ) ( output O, input I0, I1, I2, I3, I4 );\n" );
+    fprintf( pFile, "  assign O = INIT[ {I4, I3, I2, I1, I0} ];\n" );
+    fprintf( pFile, "endmodule\n" );
+
+    fprintf( pFile, "module LUT6 #( parameter INIT = 64\'h0 ) ( output O, input I0, I1, I2, I3, I4, I5 );\n" );
+    fprintf( pFile, "  assign O = INIT[ {I5, I4, I3, I2, I1, I0} ];\n" );
+    fprintf( pFile, "endmodule\n" );
+    fprintf( pFile, "`endif\n\n" );
+
+    // Write main module
+    fprintf( pFile, "module " );
+    GiaHie_DumpModuleName( pFile, p->pName );
+    fprintf( pFile, " (\n" );
+    GiaHie_DumpPortDecls( p, pFile );
+    fprintf( pFile, "\n);\n\n" );
+
+    // Declare wires for inputs (using object IDs like regular &write_ver)
+    if ( Gia_ManCiNum(p) )
+    {
+        fprintf( pFile, "  wire " );
+        GiaHie_WriteObjRange( pFile, p, 0, Gia_ManCiNum(p), nDigits, 7, 4, 0, 1 );
+        fprintf( pFile, ";\n\n" );
+        GiaHie_DumpInputAssigns( p, pFile, nDigits );
+        fprintf( pFile, "\n" );
+    }
+
+    // Declare wires for outputs (using object IDs like regular &write_ver)
+    if ( Gia_ManCoNum(p) )
+    {
+        fprintf( pFile, "  wire " );
+        GiaHie_WriteObjRange( pFile, p, 0, Gia_ManCoNum(p), nDigits, 7, 4, 0, 0 );
+        fprintf( pFile, ";\n\n" );
+        GiaHie_DumpOutputAssigns( p, pFile, nDigits );
+        fprintf( pFile, "\n" );
+    }
+
+    // Declare internal wires for LUT outputs (10 per line)
+    {
+        int nWiresPerLine = 10;
+        int nWireCount = 0;
+        int fFirst = 1;
+        Gia_ManForEachLut( p, i )
+        {
+            if ( nWireCount == 0 )
+                fprintf( pFile, "  wire " );
+            if ( !fFirst )
+                fprintf( pFile, ", " );
+            fprintf( pFile, "n%0*d", nDigits, i );
+            fFirst = 0;
+            nWireCount++;
+            if ( nWireCount == nWiresPerLine )
+            {
+                fprintf( pFile, ";\n" );
+                nWireCount = 0;
+                fFirst = 1;
+            }
+        }
+        if ( nWireCount > 0 )
+            fprintf( pFile, ";\n" );
+    }
+    fprintf( pFile, "\n" );
+
+    // Initialize truth table computation
+    vLeaves = Vec_IntAlloc( 6 );
+    Gia_ObjComputeTruthTableStart( p, 6 );
+
+    // Write LUT6 instances
+    Gia_ManForEachLut( p, i )
+    {
+        nLutSize = Gia_ObjLutSize( p, i );
+
+        // Collect LUT inputs
+        Vec_IntClear( vLeaves );
+        Gia_LutForEachFanin( p, i, iFanin, k )
+            Vec_IntPush( vLeaves, iFanin );
+
+        // Compute truth table
+        pTruth = Gia_ObjComputeTruthTableCut( p, Gia_ManObj(p, i), vLeaves );
+
+        // Write LUT instance - use appropriate size LUT based on inputs
+        if ( nLutSize <= 1 )
+            nLutSize = 2; // minimum LUT size is 2
+
+        // Determine INIT width and padding
+        int nInitBits = (1 << nLutSize);
+        unsigned long long truthValue = (nLutSize <= 6) ? pTruth[0] : 0;
+
+        // Mask truth value to the appropriate number of bits
+        if ( nLutSize < 6 )
+            truthValue &= ((1ULL << nInitBits) - 1);
+
+        // Write LUT instance with padding for alignment
+        fprintf( pFile, "  (* DONT_TOUCH = \"yes\" *) LUT%d #(", nLutSize );
+
+        // Write INIT parameter with appropriate width and padding aligned to 64-bit width
+        if ( nLutSize == 2 )
+            fprintf( pFile, ".INIT(04'h%01llx               )) u_lut%0*d (", truthValue, nDigits, i );
+        else if ( nLutSize == 3 )
+            fprintf( pFile, ".INIT(08'h%02llx              )) u_lut%0*d (", truthValue, nDigits, i );
+        else if ( nLutSize == 4 )
+            fprintf( pFile, ".INIT(16'h%04llx            )) u_lut%0*d (", truthValue, nDigits, i );
+        else if ( nLutSize == 5 )
+            fprintf( pFile, ".INIT(32'h%08llx        )) u_lut%0*d (", truthValue, nDigits, i );
+        else // nLutSize == 6
+            fprintf( pFile, ".INIT(64'h%016llx)) u_lut%0*d (", truthValue, nDigits, i );
+
+        // Write LUT inputs - only the ones actually used by this LUT size
+        for ( k = 0; k < nLutSize; k++ )
+        {
+            iFanin = Vec_IntEntry( vLeaves, k );
+            if ( k > 0 )
+                fprintf( pFile, ", " );
+            fprintf( pFile, ".I%d(n%0*d)", k, nDigits, iFanin );
+        }
+
+        // Write LUT output
+        fprintf( pFile, ", .O(n%0*d));\n", nDigits, i );
+    }
+
+    // Cleanup truth table computation
+    Gia_ObjComputeTruthTableStop( p );
+    Vec_IntFree( vLeaves );
+
+    fprintf( pFile, "\n" );
+
+    // Connect internal nodes to outputs (like regular &write_ver)
+    Gia_ManForEachCo( p, pObj, i )
+    {
+        fprintf( pFile, "  assign n%0*d = ", nDigits, Gia_ManCoIdToId(p, i) );
+        GiaHie_PrintObjLit( pFile, Gia_ObjFaninId0p(p, pObj), Gia_ObjFaninC0(pObj), nDigits );
+        fprintf( pFile, ";\n" );
+    }
+
+    fprintf( pFile, "\nendmodule\n" );
+    fclose( pFile );
+}
+
+/**Function*************************************************************
+
+  Synopsis    []
+
+  Description []
+
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+void Gia_WriteVerilogInt( char * pFileName, Gia_Man_t * pGia, int fUseGates, int fVerbose, int fUseCtrlPis )
+{
+    (void)fVerbose;
+    if ( pFileName == NULL || pGia == NULL )
+        return;
+    if ( fUseGates )
+        GiaHie_DumpInterfaceGates( pGia, pFileName );
+    else
+        GiaHie_DumpInterfaceAssigns( pGia, pFileName, fUseCtrlPis );
+}
+
+void Gia_WriteVerilog( char * pFileName, Gia_Man_t * pGia, int fUseGates, int fVerbose )
+{
+    Gia_WriteVerilogInt( pFileName, pGia, fUseGates, fVerbose, 0 );
+}
+
+/**Function*************************************************************
+
+  Synopsis    [Writes mapped AIG as LUT6-based Verilog]
+
+  Description []
+
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+void Gia_WriteMappedVerilog( char * pFileName, Gia_Man_t * pGia, int fVerbose )
+{
+    (void)fVerbose;
+    if ( pFileName == NULL || pGia == NULL )
+        return;
+    if ( !Gia_ManHasMapping(pGia) )
+    {
+        printf( "Cannot write LUT-based Verilog because AIG is not mapped.\n" );
+        return;
+    }
+    GiaHie_DumpMappedLuts( pGia, pFileName );
+}
+
 ////////////////////////////////////////////////////////////////////////
 ///                       END OF FILE                                ///
 ////////////////////////////////////////////////////////////////////////
 
 
 ABC_NAMESPACE_IMPL_END
-

@@ -276,6 +276,7 @@ int Ssw_ManSweepBmc( Ssw_Man_t * p )
     int i, f;
     abctime clk;
 clk = Abc_Clock();
+    abctime timeSatBmc = p->timeSat, timeSimSatBmc = p->timeSimSat;
 
     // start initialized timeframes
     p->pFrames = Aig_ManStart( Aig_ManObjNumMax(p->pAig) * p->pPars->nFramesK );
@@ -288,6 +289,8 @@ clk = Abc_Clock();
         pProgress = Bar_ProgressStart( stdout, Aig_ManObjNumMax(p->pAig) * p->pPars->nFramesK );
     for ( f = 0; f < p->pPars->nFramesK; f++ )
     {
+        if ( Ssw_ManCallbackStop(p) )
+            break;
         // map constants and PIs
         Ssw_ObjSetFrame( p, Aig_ManConst1(p->pAig), f, Aig_ManConst1(p->pFrames) );
         Saig_ManForEachPi( p->pAig, pObj, i )
@@ -298,12 +301,16 @@ clk = Abc_Clock();
         // sweep internal nodes
         Aig_ManForEachNode( p->pAig, pObj, i )
         {
+            if ( Ssw_ManCallbackStop(p) )
+                break;
             if ( p->pPars->fVerbose )
                 Bar_ProgressUpdate( pProgress, Aig_ManObjNumMax(p->pAig) * f + i, NULL );
             pObjNew = Aig_And( p->pFrames, Ssw_ObjChild0Fra(p, pObj, f), Ssw_ObjChild1Fra(p, pObj, f) );
             Ssw_ObjSetFrame( p, pObj, f, pObjNew );
             p->fRefined |= Ssw_ManSweepNode( p, pObj, f, 1, NULL );
         }
+        if ( i < Aig_ManObjNumMax(p->pAig) )
+            break;
         // quit if this is the last timeframe
         if ( f == p->pPars->nFramesK - 1 )
             break;
@@ -323,7 +330,7 @@ clk = Abc_Clock();
 
     // cleanup
 //    Ssw_ClassesCheck( p->ppClasses );
-p->timeBmc += Abc_Clock() - clk;
+p->timeBmc += (Abc_Clock() - clk) - (p->timeSat - timeSatBmc) - (p->timeSimSat - timeSimSatBmc);
     return p->fRefined;
 }
 
@@ -415,6 +422,8 @@ p->timeReduce += Abc_Clock() - clk;
     vObjPairs = (p->pPars->fEquivDump || p->pPars->fEquivDump2)? Vec_IntAlloc(1000) : NULL;
     Aig_ManForEachObj( p->pAig, pObj, i )
     {
+        if ( Ssw_ManCallbackStop(p) )
+            break;
         if ( p->pPars->fVerbose )
             Bar_ProgressUpdate( pProgress, i, NULL );
         if ( Saig_ObjIsLo(p->pAig, pObj) )

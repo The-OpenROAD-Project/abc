@@ -1,6 +1,6 @@
 /**CFile****************************************************************
 
-  FileName    [ifDec07.c]
+  FileName    [ifDecJ.c]
 
   SystemName  [ABC: Logic synthesis and verification system.]
 
@@ -14,11 +14,12 @@
 
   Date        [Ver. 1.0. Started - November 21, 2006.]
 
-  Revision    [$Id: ifDec07.c,v 1.00 2006/11/21 00:00:00 alanmi Exp $]
+  Revision    [$Id: ifDecJ.c,v 1.00 2006/11/21 00:00:00 alanmi Exp $]
 
 ***********************************************************************/
 
 #include "if.h"
+#include "aig/gia/gia.h"
 
 ABC_NAMESPACE_IMPL_START
 
@@ -34,9 +35,12 @@ int If_CutPerformCheckJ( If_Man_t * p, unsigned * pTruth, int nVars, int nLeaves
 {
     return 1;
 }
-word If_CutPerformDeriveJ( If_Man_t * p, unsigned * pTruth, int nVars, int nLeaves, char * pStr, int fDerive )
+word If_CutPerformDeriveJ( If_Man_t * p, unsigned * pTruth, int nVars, int nLeaves, char * pStr, int fDerive, int fDelay )
 {
     return 0;
+}
+void If_CutComputeIntrinsicJ( If_Man_t * p, word Config, int nLeaves, int * pIntrinsicDelays )
+{
 }
 void If_PermUnpack( unsigned Value, int Pla2Var[9] )
 {
@@ -48,4 +52,3 @@ void If_PermUnpack( unsigned Value, int Pla2Var[9] )
 
 
 ABC_NAMESPACE_IMPL_END
-

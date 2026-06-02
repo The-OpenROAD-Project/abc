@@ -238,6 +238,7 @@ Aig_Man_t * Ssw_SignalCorrespondenceRefine( Ssw_Man_t * p )
     Aig_Man_t * pAigNew;
     int RetValue, nIter = -1, nPrev[4] = {0};
     abctime clk, clkTotal = Abc_Clock();
+    abctime nTimeToStop = p->pPars->TimeLimit > 0 ? clkTotal + (abctime)p->pPars->TimeLimit * CLOCKS_PER_SEC : 0;
     // get the starting stats
     p->nLitsBeg  = Ssw_ClassesLitNum( p->ppClasses );
     p->nNodesBeg = Aig_ManNodeNum(p->pAig);
@@ -251,6 +252,8 @@ Aig_Man_t * Ssw_SignalCorrespondenceRefine( Ssw_Man_t * p )
     if ( !p->pPars->fLatchCorr || p->pPars->nFramesK > 1 )
     {
         p->pMSat = Ssw_SatStart( 0 );
+        if ( nTimeToStop )
+            sat_solver_set_runtime_limit( p->pMSat->pSat, nTimeToStop );
         if ( p->pPars->fConstrs )
             Ssw_ManSweepBmcConstr( p );
         else
@@ -276,11 +279,8 @@ Aig_Man_t * Ssw_SignalCorrespondenceRefine( Ssw_Man_t * p )
         Aig_ManStop( pSRed );
     }
 */
-    if ( p->pPars->pFunc )
-    {
-        ((int (*)(void *))p->pPars->pFunc)( p->pPars->pData );
-        ((int (*)(void *))p->pPars->pFunc)( p->pPars->pData );
-    }
+    if ( Ssw_ManCallbackStop(p) || Ssw_ManCallbackStop(p) )
+        goto finalize;
     if ( p->pPars->nStepsMax == 0 )
     {
         Abc_Print( 1, "Stopped signal correspondence after BMC.\n" );
@@ -290,6 +290,8 @@ Aig_Man_t * Ssw_SignalCorrespondenceRefine( Ssw_Man_t * p )
     nSatProof = nSatCallsSat = nRecycles = nSatFailsReal = nUniques = 0;
     for ( nIter = 0; ; nIter++ )
     {
+        if ( nTimeToStop && Abc_Clock() >= nTimeToStop )
+            goto finalize;
         if ( p->pPars->nStepsMax == nIter )
         {
             Abc_Print( 1, "Stopped signal correspondence after %d refiment iterations.\n", nIter );
@@ -306,9 +308,13 @@ Aig_Man_t * Ssw_SignalCorrespondenceRefine( Ssw_Man_t * p )
             Abc_Print( 1, "If the miter is SAT, the reduced result is incorrect.\n" );
             break;
         }
+        if ( Ssw_ManCallbackStop(p) )
+            goto finalize;
 
 clk = Abc_Clock();
         p->pMSat = Ssw_SatStart( 0 );
+        if ( nTimeToStop )
+            sat_solver_set_runtime_limit( p->pMSat->pSat, nTimeToStop );
         if ( p->pPars->fLatchCorrOpt )
         {
             RetValue = Ssw_ManSweepLatch( p );
@@ -379,8 +385,8 @@ clk = Abc_Clock();
         Ssw_ManCleanup( p );
         if ( !RetValue )
             break;
-        if ( p->pPars->pFunc )
-            ((int (*)(void *))p->pPars->pFunc)( p->pPars->pData );
+        if ( Ssw_ManCallbackStop(p) )
+            goto finalize;
         if ( p->pPars->nLimitMax )
         {
             int nCur = Ssw_ClassesCand1Num(p->ppClasses);

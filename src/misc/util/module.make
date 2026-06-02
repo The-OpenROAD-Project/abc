@@ -1,4 +1,5 @@
-SRC +=  src/misc/util/utilBridge.c \
+SRC +=  src/misc/util/utilAigSim.c \
+    src/misc/util/utilBridge.c \
     src/misc/util/utilBipart.c \
     src/misc/util/utilBSet.c \
     src/misc/util/utilCex.c \
@@ -9,6 +10,7 @@ SRC +=  src/misc/util/utilBridge.c \
     src/misc/util/utilMiniver.c \
     src/misc/util/utilMulSim.c \
     src/misc/util/utilNam.c \
+    src/misc/util/utilNet.c \
     src/misc/util/utilPrefix.cpp \
     src/misc/util/utilPth.c \
     src/misc/util/utilSignal.c \

@@ -4,6 +4,13 @@ CXX  := g++
 AR   := ar
 LD   := $(CXX)
 
+# Auto-enable ccache if available
+CCACHE := $(shell command -v ccache 2>/dev/null)
+ifneq ($(CCACHE),)
+  CC := $(CCACHE) $(CC)
+  CXX := $(CCACHE) $(CXX)
+endif
+
 MSG_PREFIX ?=
 ABCSRC ?= .
 VPATH = $(ABCSRC)
@@ -30,13 +37,13 @@ MODULES := \
 	src/base/abc src/base/abci src/base/cmd src/base/io src/base/main src/base/exor \
 	src/base/ver src/base/wlc src/base/wln src/base/acb src/base/bac src/base/cba src/base/pla src/base/test \
 	src/map/mapper src/map/mio src/map/super src/map/if src/map/if/acd \
-	src/map/amap src/map/cov src/map/scl src/map/mpm \
+	src/map/amap src/map/cov src/map/scl src/map/mpm src/map/emap \
 	src/misc/extra src/misc/mvc src/misc/st src/misc/util src/misc/nm \
 	src/misc/vec src/misc/hash src/misc/tim src/misc/bzlib src/misc/zlib \
-	src/misc/mem src/misc/bar src/misc/bbl src/misc/parse \
+	src/misc/mem src/misc/bar src/misc/bbl src/misc/parse src/misc/btor \
 	src/opt/cut src/opt/fxu src/opt/fxch src/opt/rwr src/opt/mfs src/opt/sim \
 	src/opt/ret src/opt/fret src/opt/res src/opt/lpk src/opt/nwk src/opt/rwt src/opt/rar \
-	src/opt/cgt src/opt/csw src/opt/dar src/opt/dau src/opt/dsc src/opt/sfm src/opt/sbd src/opt/eslim \
+	src/opt/cgt src/opt/csw src/opt/dar src/opt/dau src/opt/dsc src/opt/sfm src/opt/sbd src/opt/eslim src/opt/ufar src/opt/untk src/opt/util \
 	src/sat/bsat src/sat/xsat src/sat/satoko src/sat/csat src/sat/msat src/sat/psat src/sat/cnf src/sat/bmc src/sat/glucose src/sat/glucose2 src/sat/kissat src/sat/cadical \
 	src/bool/bdc src/bool/deco src/bool/dec src/bool/kit src/bool/lucky \
 	src/bool/rsb src/bool/rpo \
@@ -179,32 +186,32 @@ DEP := $(OBJ:.o=.d)
 %.o: %.c
 	@mkdir -p $(dir $@)
 	@echo "$(MSG_PREFIX)\`\` Compiling:" $(LOCAL_PATH)/$<
-	$(VERBOSE)$(CC) -c $(OPTFLAGS) $(INCLUDES) $(CFLAGS) $< -o $@
+	$(VERBOSE)$(CC) -c $(OPTFLAGS) $(INCLUDES) $(CPPFLAGS) $(CFLAGS) $< -o $@
 
 %.o: %.cc
 	@mkdir -p $(dir $@)
 	@echo "$(MSG_PREFIX)\`\` Compiling:" $(LOCAL_PATH)/$<
-	$(VERBOSE)$(CXX) -c $(OPTFLAGS) $(INCLUDES) $(CXXFLAGS) $< -o $@
+	$(VERBOSE)$(CXX) -c $(OPTFLAGS) $(INCLUDES) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 %.o: %.cpp
 	@mkdir -p $(dir $@)
 	@echo "$(MSG_PREFIX)\`\` Compiling:" $(LOCAL_PATH)/$<
-	$(VERBOSE)$(CXX) -c $(OPTFLAGS) $(INCLUDES) $(CXXFLAGS) $< -o $@
+	$(VERBOSE)$(CXX) -c $(OPTFLAGS) $(INCLUDES) $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 %.d: %.c
 	@mkdir -p $(dir $@)
 	@echo "$(MSG_PREFIX)\`\` Generating dependency:" $(LOCAL_PATH)/$<
-	$(VERBOSE)$(ABCSRC)/depends.sh "$(CC)" `dirname $*.c` $(OPTFLAGS) $(INCLUDES) $(CFLAGS) $< > $@
+	$(VERBOSE)$(ABCSRC)/depends.sh "$(CC)" `dirname $*.c` $(OPTFLAGS) $(INCLUDES) $(CPPFLAGS) $(CFLAGS) $< > $@
 
 %.d: %.cc
 	@mkdir -p $(dir $@)
 	@echo "$(MSG_PREFIX)\`\` Generating dependency:" $(LOCAL_PATH)/$<
-	$(VERBOSE)$(ABCSRC)/depends.sh "$(CXX)" `dirname $*.cc` $(OPTFLAGS) $(INCLUDES) $(CXXFLAGS) $< > $@
+	$(VERBOSE)$(ABCSRC)/depends.sh "$(CXX)" `dirname $*.cc` $(OPTFLAGS) $(INCLUDES) $(CPPFLAGS) $(CXXFLAGS) $< > $@
 
 %.d: %.cpp
 	@mkdir -p $(dir $@)
 	@echo "$(MSG_PREFIX)\`\` Generating dependency:" $(LOCAL_PATH)/$<
-	$(VERBOSE)$(ABCSRC)/depends.sh "$(CXX)" `dirname $*.cpp` $(OPTFLAGS) $(INCLUDES) $(CXXFLAGS) $< > $@
+	$(VERBOSE)$(ABCSRC)/depends.sh "$(CXX)" `dirname $*.cpp` $(OPTFLAGS) $(INCLUDES) $(CPPFLAGS) $(CXXFLAGS) $< > $@
 
 ifndef ABC_MAKE_NO_DEPS
 -include $(DEP)
@@ -220,6 +227,7 @@ clean:
 	$(VERBOSE)rm -rvf $(OBJ)
 	$(VERBOSE)rm -rvf $(GARBAGE)
 	$(VERBOSE)rm -rvf $(OBJ:.o=.d)
+	@if [ -n "$(CCACHE)" ]; then echo "$(MSG_PREFIX)ccache available: $(CCACHE)"; fi
 
 tags:
 	etags `find . -type f -regex '.*\.\(c\|h\)'`

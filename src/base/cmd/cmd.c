@@ -66,6 +66,8 @@ static int CmdCommandMvsis         ( Abc_Frame_t * pAbc, int argc, char ** argv 
 static int CmdCommandCapo          ( Abc_Frame_t * pAbc, int argc, char ** argv );
 static int CmdCommandStarter       ( Abc_Frame_t * pAbc, int argc, char ** argv );
 static int CmdCommandAutoTuner     ( Abc_Frame_t * pAbc, int argc, char ** argv );
+static int CmdCommandSolver        ( Abc_Frame_t * pAbc, int argc, char ** argv );
+static int CmdCommandSolver2       ( Abc_Frame_t * pAbc, int argc, char ** argv );
 
 extern int Cmd_CommandAbcLoadPlugIn( Abc_Frame_t * pAbc, int argc, char ** argv );
 
@@ -96,6 +98,7 @@ void Cmd_Init( Abc_Frame_t * pAbc )
     Cmd_CommandAdd( pAbc, "Basic", "quit",          CmdCommandQuit,            0 );
     Cmd_CommandAdd( pAbc, "Basic", "abcrc",         CmdCommandAbcrc,           0 );
     Cmd_CommandAdd( pAbc, "Basic", "history",       CmdCommandHistory,         0 );
+    Cmd_CommandAdd( pAbc, "Basic", "hi",            CmdCommandHistory,         0 );
     Cmd_CommandAdd( pAbc, "Basic", "alias",         CmdCommandAlias,           0 );
     Cmd_CommandAdd( pAbc, "Basic", "unalias",       CmdCommandUnalias,         0 );
     Cmd_CommandAdd( pAbc, "Basic", "help",          CmdCommandHelp,            0 );
@@ -121,6 +124,8 @@ void Cmd_Init( Abc_Frame_t * pAbc )
     Cmd_CommandAdd( pAbc, "Various", "capo",        CmdCommandCapo,            0 );
     Cmd_CommandAdd( pAbc, "Various", "starter",     CmdCommandStarter,         0 );
     Cmd_CommandAdd( pAbc, "Various", "autotuner",   CmdCommandAutoTuner,       0 );
+    Cmd_CommandAdd( pAbc, "Various", "&solver",     CmdCommandSolver,          0 );
+    Cmd_CommandAdd( pAbc, "Various", "&solver2",    CmdCommandSolver2,         0 );
 
     Cmd_CommandAdd( pAbc, "Various", "load_plugin", Cmd_CommandAbcLoadPlugIn,  0 );
 }
@@ -437,42 +442,83 @@ int CmdCommandAbcrc( Abc_Frame_t * pAbc, int argc, char **argv )
 int CmdCommandHistory( Abc_Frame_t * pAbc, int argc, char **argv )
 {
     char * pName, * pStr = NULL;
-    int i, c;
+    char ** ppMatches = NULL;
+    int * pIds = NULL;
+    int i;
     int nPrints = 20;
-    Extra_UtilGetoptReset();
-    while ( ( c = Extra_UtilGetopt( argc, argv, "h" ) ) != EOF )
+    int nPrinted = 0;
+    if ( argc == 2 && !strcmp(argv[1], "-h") )
+        goto usage;
+    if ( argc > 3 )
+        goto usage;
+    // parse arguments: can be [substring] [number] in either order
+    if ( argc == 2 )
     {
-        switch ( c )
+        // one argument: either number or substring
+        pStr = argv[1];
+        if ( pStr && pStr[0] >= '1' && pStr[0] <= '9' )
         {
-            case 'h':
-                goto usage;
-            default :
-                goto usage;
+            nPrints = atoi(pStr);
+            pStr = NULL;
         }
     }
-    if ( argc > globalUtilOptind + 1 )
-        goto usage;
-    // get the number from the command line
-    pStr = argc == globalUtilOptind+1 ? argv[globalUtilOptind] : NULL;
-    if ( pStr && pStr[0] >= '1' && pStr[0] <= '9' )
-        nPrints = atoi(pStr), pStr = NULL;
+    else if ( argc == 3 )
+    {
+        // two arguments: substring and number
+        char * arg1 = argv[1];
+        char * arg2 = argv[2];
+
+        // Try to parse second argument as number
+        if ( arg2[0] >= '1' && arg2[0] <= '9' )
+        {
+            pStr = arg1;
+            nPrints = atoi(arg2);
+        }
+        // Try to parse first argument as number
+        else if ( arg1[0] >= '1' && arg1[0] <= '9' )
+        {
+            nPrints = atoi(arg1);
+            pStr = arg2;
+        }
+        else
+        {
+            // Neither is a number, error
+            goto usage;
+        }
+    }
+
     // print the commands
     if ( pStr == NULL ) {
+        // No search string, show last nPrints entries
         Vec_PtrForEachEntryStart( char *, pAbc->aHistory, pName, i, Abc_MaxInt(0, Vec_PtrSize(pAbc->aHistory)-nPrints) )
-            fprintf( pAbc->Out, "%2d : %s\n", Vec_PtrSize(pAbc->aHistory)-i, pName );
+            fprintf( pAbc->Out, "%4d : %s\n", Vec_PtrSize(pAbc->aHistory)-i, pName );
     }
     else {
-        Vec_PtrForEachEntry( char *, pAbc->aHistory, pName, i )
+        // Search string provided, select up to nPrints most recent matching entries
+        ppMatches = ABC_ALLOC( char *, nPrints );
+        pIds = ABC_ALLOC( int, nPrints );
+        Vec_PtrForEachEntryReverse( char *, pAbc->aHistory, pName, i )
             if ( strstr(pName, pStr) )
-                fprintf( pAbc->Out, "%2d : %s\n", Vec_PtrSize(pAbc->aHistory)-i, pName );
+            {
+                pIds[nPrinted] = Vec_PtrSize(pAbc->aHistory)-i;
+                ppMatches[nPrinted] = pName;
+                if ( ++nPrinted >= nPrints )
+                    break;
+            }
+        // Print the selected entries in reverse so larger history indices appear first
+        for ( i = nPrinted - 1; i >= 0; i-- )
+            fprintf( pAbc->Out, "%4d : %s\n", pIds[i], ppMatches[i] );
+        ABC_FREE( pIds );
+        ABC_FREE( ppMatches );
     }
     return 0;
 
 usage:
-    fprintf( pAbc->Err, "usage: history [-h] <num>\n" );
+    fprintf( pAbc->Err, "usage: history [-h] [substring] [num]\n" );
     fprintf( pAbc->Err, "\t        lists the last commands entered on the command line\n" );
-    fprintf( pAbc->Err, "\t-h    : print the command usage\n" );
-    fprintf( pAbc->Err, "\t<num> : the maximum number of entries to show [default = %d]\n", nPrints );
+    fprintf( pAbc->Err, "\t-h        : print the command usage\n" );
+    fprintf( pAbc->Err, "\tsubstring : search for commands containing this substring\n" );
+    fprintf( pAbc->Err, "\tnum       : the maximum number of entries to show [default = %d]\n", nPrints );
     return ( 1 );
 }
 
@@ -2803,6 +2849,202 @@ usage:
     Abc_Print( -2, "\t-F cmd : list of AIGER files to be used for autotuning\n" );
     Abc_Print( -2, "\t-v     : toggle printing verbose information [default = %s]\n", fVerbose? "yes": "no" );
     Abc_Print( -2, "\t-h     : print the command usage\n");
+    return 1;
+}
+
+/**Function********************************************************************
+
+  Synopsis    [Calls Capo internally.]
+
+  Description []
+
+  SideEffects []
+
+  SeeAlso     []
+
+******************************************************************************/
+int CmdCommandSolver( Abc_Frame_t * pAbc, int argc, char **argv )
+{
+    extern void Gia_AigerWrite( Gia_Man_t * p, char * pFileName, int fWriteSymbols, int fCompact, int fWriteNewLine );
+    FILE * pFile;
+    char Command[1000];
+    char TempFileName[100];
+    unsigned int RandomNum;
+    int i;
+
+    // Check for help flags
+    if ( argc > 1 )
+    {
+        if ( strcmp( argv[1], "-h" ) == 0 )
+            goto usage;
+        if ( strcmp( argv[1], "-?" ) == 0 )
+            goto usage;
+    }
+
+    // Check if AIG is available
+    if ( pAbc->pGia == NULL )
+    {
+        fprintf( pAbc->Err, "The current AIG is not available.\n" );
+        goto usage;
+    }
+
+#if defined(__wasm)
+    fprintf( pAbc->Err, "Unsupported command.\n" );
+    return 1;
+#else
+    // Check if solver binary exists in current directory or PATH
+    char * pSolverName;
+    if ( (pFile = fopen( "./solver", "r" )) != NULL )
+    {
+        pSolverName = "./solver";
+        fclose( pFile );
+    }
+    else
+    {
+        // Check if solver exists in PATH
+        char CheckCommand[100];
+        sprintf( CheckCommand, "which solver > /dev/null 2>&1" );
+        if ( system( CheckCommand ) == 0 )
+        {
+            pSolverName = "solver";
+        }
+        else
+        {
+            fprintf( pAbc->Err, "Cannot find \"solver\" binary in the current directory or in PATH.\n" );
+            goto usage;
+        }
+    }
+
+    // Generate random 8-hex-character temporary filename
+    RandomNum = (unsigned int)(ABC_PTRUINT_T)pAbc ^
+                (unsigned int)(ABC_PTRUINT_T)pAbc->pGia ^
+                (unsigned int)time(NULL) ^
+                (unsigned int)getpid();
+    sprintf( TempFileName, "%08X.aig", RandomNum );
+
+    // Write the current AIG to the temporary file
+    Gia_AigerWrite( pAbc->pGia, TempFileName, 0, 0, 1 );
+
+    // Verify the file was created successfully
+    if ( (pFile = fopen( TempFileName, "r" )) == NULL )
+    {
+        fprintf( pAbc->Err, "Failed to create temporary AIG file \"%s\".\n", TempFileName );
+        return 1;
+    }
+    fclose( pFile );
+
+    // Build the command string
+    sprintf( Command, "%s", pSolverName );
+
+    // Add all user arguments
+    for ( i = 1; i < argc; i++ )
+    {
+        strcat( Command, " " );
+        strcat( Command, argv[i] );
+    }
+
+    // Add the AIG filename at the end
+    strcat( Command, " " );
+    strcat( Command, TempFileName );
+
+    // Debug: Show what command is being executed
+    fprintf( pAbc->Out, "Executing command: %s\n", Command );
+
+    // Execute the solver command
+    if ( system( Command ) == -1 )
+    {
+        fprintf( pAbc->Err, "The following command has failed:\n" );
+        fprintf( pAbc->Err, "\"%s\"\n", Command );
+        unlink( TempFileName );
+        return 1;
+    }
+
+    // Clean up the temporary file
+    unlink( TempFileName );
+#endif
+    return 0;
+
+usage:
+    fprintf( pAbc->Err, "\tusage: &solver <args>\n");
+    fprintf( pAbc->Err, "\t           run the external solver binary on the current AIG\n" );
+    fprintf( pAbc->Err, "\t-h      :  print the command usage\n" );
+    fprintf( pAbc->Err, "\t<args>  :  arguments to pass to the solver\n" );
+    fprintf( pAbc->Err, "\t           The current AIG will be written to a temporary file\n" );
+    fprintf( pAbc->Err, "\t           and passed as the last argument to the solver.\n" );
+    fprintf( pAbc->Err, "\t           Example: solver -h\n" );
+    return 1;
+}
+
+
+/**Function********************************************************************
+
+  Synopsis    []
+
+  Description []
+
+  SideEffects []
+
+  SeeAlso     []
+
+******************************************************************************/
+int CmdCommandSolver2( Abc_Frame_t * pAbc, int argc, char **argv )
+{
+    FILE * pFile;
+    char Command[2000];
+    int i;
+
+    if ( argc > 1 )
+    {
+        if ( strcmp( argv[1], "-h" ) == 0 )
+            goto usage;
+        if ( strcmp( argv[1], "-?" ) == 0 )
+            goto usage;
+    }
+
+#if defined(__wasm)
+    fprintf( pAbc->Err, "Unsupported command.\n" );
+    return 1;
+#else
+    // Check if solver binary exists in current directory or PATH
+    if ( (pFile = fopen( "./solver", "r" )) != NULL )
+    {
+        sprintf( Command, "%s", "./solver" );
+        fclose( pFile );
+    }
+    else
+    {
+        char CheckCommand[100];
+        sprintf( CheckCommand, "which solver > /dev/null 2>&1" );
+        if ( system( CheckCommand ) != 0 )
+        {
+            fprintf( pAbc->Err, "Cannot find \"solver\" binary in the current directory or in PATH.\n" );
+            goto usage;
+        }
+        sprintf( Command, "%s", "solver" );
+    }
+
+    // Append user-provided arguments as-is: solver <args>
+    for ( i = 1; i < argc; i++ )
+    {
+        strcat( Command, " " );
+        strcat( Command, argv[i] );
+    }
+
+    fprintf( pAbc->Out, "Executing command: %s\n", Command );
+    if ( system( Command ) == -1 )
+    {
+        fprintf( pAbc->Err, "The following command has failed:\n" );
+        fprintf( pAbc->Err, "\"%s\"\n", Command );
+        return 1;
+    }
+#endif
+    return 0;
+
+usage:
+    fprintf( pAbc->Err, "\tusage: &solver2 <args>\n");
+    fprintf( pAbc->Err, "\t           run the external solver as \"solver <args>\"\n" );
+    fprintf( pAbc->Err, "\t-h      :  print the command usage\n" );
+    fprintf( pAbc->Err, "\t<args>  :  all arguments passed directly to solver\n" );
     return 1;
 }
 

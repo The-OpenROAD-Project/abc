@@ -1,6 +1,8 @@
 #include "global.h"
 
+#include "walk.hpp"
 #include "internal.hpp"
+#include "random.hpp"
 
 ABC_NAMESPACE_IMPL_START
 
@@ -10,21 +12,45 @@ namespace CaDiCaL {
 
 // Random walk local search based on 'ProbSAT' ideas.
 
+// We (based on the Master project from Leah Hohl) tried to ticks
+// local search similarly to the other parts of the solver with
+// limited success however.
+//
+// On the problem `ncc_none_5047_6_3_3_3_0_435991723', the broken part
+// of walk_flip is very cheap and should not be counted in ticks, but
+// on various other problems `9pipe_k' it is very important to ticks
+// this part too.
+
+//  using ClauseOrBinary = std::variant <Clause*, TaggedBinary>;
+
 struct Walker {
 
   Internal *internal;
 
-  Random random;           // local random number generator
-  int64_t propagations;    // number of propagations
-  int64_t limit;           // limit on number of propagations
-  vector<Clause *> broken; // currently unsatisfied clauses
-  double epsilon;          // smallest considered score
-  vector<double> table;    // break value to score table
-  vector<double> scores;   // scores of candidate literals
-
-  double score (unsigned); // compute score from break count
-
-  Walker (Internal *, double size, int64_t limit);
+  // for efficiency, storing the model each time an improvement is
+  // found is too costly. Instead we store some of the flips since
+  // last time and the position of the best model found so far.
+  Random random;                 // local random number generator
+  int64_t ticks;                 // ticks to approximate run time
+  int64_t limit;                 // limit on number of propagations
+  vector<ClauseOrBinary> broken; // currently unsatisfied clauses
+  double epsilon;                // smallest considered score
+  vector<double> table;          // break value to score table
+  vector<double> scores;         // scores of candidate literals
+  std::vector<int>
+      flips; // remember the flips compared to the last best saved model
+  int best_trail_pos;
+  int64_t minimum = INT64_MAX;
+  std::vector<signed char> best_values; // best model stored so far
+  double score (unsigned);              // compute score from break count
+#ifndef CADICAL_NDEBUG
+  std::vector<signed char> current_best_model; // best model found so far
+#endif
+  Walker (Internal *, int64_t limit);
+  void populate_table (double size);
+  void push_flipped (int flipped);
+  void save_walker_trail (bool);
+  void save_final_minimum (int64_t old_minimum);
 };
 
 // These are in essence the CB values from Adrian Balint's thesis.  They
@@ -64,11 +90,18 @@ inline static double fitcbval (double size) {
 
 // Initialize the data structures for one local search round.
 
-Walker::Walker (Internal *i, double size, int64_t l)
+Walker::Walker (Internal *i, int64_t l)
     : internal (i), random (internal->opts.seed), // global random seed
-      propagations (0), limit (l) {
+      ticks (0), limit (l), best_trail_pos (-1) {
   random += internal->stats.walk.count; // different seed every time
+  flips.reserve (i->max_var / 4);
+  best_values.resize (i->max_var + 1, 0);
+#ifndef CADICAL_NDEBUG
+  current_best_model.resize (i->max_var + 1, 0);
+#endif
+}
 
+void Walker::populate_table (double size) {
   // This is the magic constant in ProbSAT (also called 'CB'), which we pick
   // according to the average size every second invocation and otherwise
   // just the default '2.0', which turns into the base '0.5'.
@@ -87,6 +120,117 @@ Walker::Walker (Internal *i, double size, int64_t l)
          table.size ());
 }
 
+// Add the literal to flip to the queue
+
+void Walker::push_flipped (int flipped) {
+  LOG ("push literal %s on the flips", LOGLIT (flipped));
+  CADICAL_assert (flipped);
+  if (best_trail_pos < 0) {
+    LOG ("not pushing flipped %s to already invalid trail",
+         LOGLIT (flipped));
+    return;
+  }
+
+  const size_t size_trail = flips.size ();
+  const size_t limit = internal->max_var / 4 + 1;
+  if (size_trail < limit) {
+    flips.push_back (flipped);
+    LOG ("pushed flipped %s to trail which now has size %zd",
+         LOGLIT (flipped), size_trail + 1);
+    return;
+  }
+
+  if (best_trail_pos) {
+    LOG ("trail reached limit %zd but has best position %d", limit,
+         best_trail_pos);
+    save_walker_trail (true);
+    flips.push_back (flipped);
+    LOG ("pushed flipped %s to trail which now has size %zu",
+         LOGLIT (flipped), flips.size ());
+    return;
+  } else {
+    LOG ("trail reached limit %zd without best position", limit);
+    flips.clear ();
+    LOG ("not pushing %s to invalidated trail", LOGLIT (flipped));
+    best_trail_pos = -1;
+    LOG ("best trail position becomes invalid");
+  }
+}
+
+void Walker::save_walker_trail (bool keep) {
+  CADICAL_assert (best_trail_pos != -1);
+  CADICAL_assert ((size_t) best_trail_pos <= flips.size ());
+//  CADICAL_assert (!keep || best_trail_pos == flips.size());
+#ifdef LOGGING
+  const size_t size_trail = flips.size ();
+#endif
+  const int kept = flips.size () - best_trail_pos;
+  LOG ("saving %d values of flipped literals on trail of size %zd",
+       best_trail_pos, flips.size ());
+
+  const auto begin = flips.begin ();
+  const auto best = flips.begin () + best_trail_pos;
+  const auto end = flips.end ();
+
+  auto it = begin;
+  for (; it != best; ++it) {
+    const int lit = *it;
+    CADICAL_assert (lit);
+    const signed char value = sign (lit);
+    const int idx = std::abs (lit);
+    best_values[idx] = value;
+  }
+  if (!keep) {
+    LOG ("no need to shift and keep remaining %u literals", kept);
+    return;
+  }
+
+#ifndef CADICAL_NDEBUG
+  for (auto v : internal->vars) {
+    if (internal->active (v))
+      CADICAL_assert (best_values[v] == current_best_model[v]);
+  }
+#endif
+  LOG ("flushed %u literals %.0f%% from trail", best_trail_pos,
+       percent (best_trail_pos, size_trail));
+  CADICAL_assert (it == best);
+  auto jt = begin;
+  for (; it != end; ++it, ++jt) {
+    CADICAL_assert (jt <= it);
+    CADICAL_assert (it < end);
+    *jt = *it;
+  }
+
+  CADICAL_assert ((int) (end - jt) == best_trail_pos);
+  CADICAL_assert ((int) (jt - begin) == kept);
+  flips.resize (kept);
+  LOG ("keeping %u literals %.0f%% on trail", kept,
+       percent (kept, size_trail));
+  LOG ("reset best trail position to 0");
+  best_trail_pos = 0;
+}
+
+// finally export_ the final minimum
+void Walker::save_final_minimum (int64_t old_init_minimum) {
+  CADICAL_assert (minimum <= old_init_minimum);
+#ifdef CADICAL_NDEBUG
+  (void) old_init_minimum;
+#endif
+
+  if (!best_trail_pos || best_trail_pos == -1)
+    LOG ("minimum already saved");
+  else
+    save_walker_trail (false);
+
+  ++internal->stats.walk.improved;
+  for (auto v : internal->vars) {
+    if (best_values[v])
+      internal->phases.saved[v] = best_values[v];
+    else
+      CADICAL_assert (!internal->active (v));
+  }
+  internal->copy_phases (internal->phases.prev);
+}
 // The scores are tabulated for faster computation (to avoid 'pow').
 
 inline double Walker::score (unsigned i) {
@@ -97,15 +241,22 @@ inline double Walker::score (unsigned i) {
 
 /*------------------------------------------------------------------------*/
 
-Clause *Internal::walk_pick_clause (Walker &walker) {
+ClauseOrBinary Internal::walk_pick_clause (Walker &walker) {
   require_mode (WALK);
   CADICAL_assert (!walker.broken.empty ());
   int64_t size = walker.broken.size ();
   if (size > INT_MAX)
     size = INT_MAX;
   int pos = walker.random.pick_int (0, size - 1);
-  Clause *res = walker.broken[pos];
-  LOG (res, "picking random position %d", pos);
+  ClauseOrBinary res = walker.broken[pos];
+#ifdef LOGGING
+  Clause *c;
+  if (!res.is_binary ())
+    c = res.clause ();
+  else
+    c = res.tagged_binary ().d;
+  LOG (c, "picking random position %d", pos);
+#endif
   return res;
 }
 
@@ -114,12 +265,14 @@ Clause *Internal::walk_pick_clause (Walker &walker) {
 // Compute the number of clauses which would be become unsatisfied if 'lit'
 // is flipped and set to false.  This is called the 'break-count' of 'lit'.
 
-unsigned Internal::walk_break_value (int lit) {
-
+unsigned Internal::walk_break_value (int lit, int64_t &ticks) {
   require_mode (WALK);
+  START (walkbreak);
   CADICAL_assert (val (lit) > 0);
+  const int64_t oldticks = ticks;
 
   unsigned res = 0; // The computed break-count of 'lit'.
+  ticks += (1 + cache_lines (watches (lit).size (), sizeof (Clause *)));
 
   for (auto &w : watches (lit)) {
     CADICAL_assert (w.blit != lit);
@@ -131,6 +284,11 @@ unsigned Internal::walk_break_value (int lit) {
     }
 
     Clause *c = w.clause;
+#ifdef LOGGING
+    CADICAL_assert (c != dummy_binary);
+#endif
+    ++ticks;
+
     CADICAL_assert (lit == c->literals[0]);
 
     // Now try to find a second satisfied literal starting at 'literals[1]'
@@ -168,9 +326,10 @@ unsigned Internal::walk_break_value (int lit) {
       *i = prev;
       prev = other;
     }
-
     res++; // Literal 'lit' single satisfies clause 'c'.
   }
+  stats.ticks.walkbreak += (ticks - oldticks);
+  STOP (walkbreak);
 
   return res;
 }
@@ -191,6 +350,8 @@ unsigned Internal::walk_break_value (int lit) {
 int Internal::walk_pick_lit (Walker &walker, Clause *c) {
   LOG ("picking literal by break-count");
   CADICAL_assert (walker.scores.empty ());
+  const int64_t old = walker.ticks;
+  walker.ticks += 1;
   double sum = 0;
   int64_t propagations = 0;
   for (const auto lit : *c) {
@@ -201,16 +362,15 @@ int Internal::walk_pick_lit (Walker &walker, Clause *c) {
     }
     CADICAL_assert (active (lit));
     propagations++;
-    unsigned tmp = walk_break_value (-lit);
+    unsigned tmp = walk_break_value (-lit, walker.ticks);
     double score = walker.score (tmp);
     LOG ("literal %d break-count %u score %g", lit, tmp, score);
     walker.scores.push_back (score);
     sum += score;
   }
+  (void) propagations; // TODO actually unused?
   LOG ("scored %zd literals", walker.scores.size ());
   CADICAL_assert (!walker.scores.empty ());
-  walker.propagations += propagations;
-  stats.propagations.walk += propagations;
   CADICAL_assert (walker.scores.size () <= (size_t) c->size);
   const double lim = sum * walker.random.generate_double ();
   LOG ("score sum %g limit %g", sum, lim);
@@ -236,13 +396,78 @@ int Internal::walk_pick_lit (Walker &walker, Clause *c) {
   }
   walker.scores.clear ();
   LOG ("picking literal %d by break-count", res);
+  stats.ticks.walkpick += walker.ticks - old;
+  return res;
+}
+
+int Internal::walk_pick_lit (Walker &walker, ClauseOrBinary c) {
+  if (c.is_binary ())
+    return walk_pick_lit (walker, c.tagged_binary ());
+  return walk_pick_lit (walker, c.clause ());
+}
+
+int Internal::walk_pick_lit (Walker &walker, const TaggedBinary c) {
+  LOG ("picking literal by break-count on binary clause [%" PRIu64 "]%s %s",
+       c.d->id, LOGLIT (c.lit), LOGLIT (c.other));
+  CADICAL_assert (walker.scores.empty ());
+  const int64_t old = walker.ticks;
+  double sum = 0;
+  int64_t propagations = 0;
+  const std::array<int, 2> clause = {c.lit, c.other};
+  for (const auto lit : clause) {
+    CADICAL_assert (active (lit));
+    if (var (lit).level == 1) {
+      LOG ("skipping assumption %d for scoring", -lit);
+      continue;
+    }
+    CADICAL_assert (active (lit));
+    CADICAL_assert (val (lit) < 0);
+    propagations++;
+    unsigned tmp = walk_break_value (-lit, walker.ticks);
+    double score = walker.score (tmp);
+    LOG ("literal %d break-count %u score %g", lit, tmp, score);
+    walker.scores.push_back (score);
+    sum += score;
+  }
+  (void) propagations; // TODO unused?
+  LOG ("scored %zd literals", walker.scores.size ());
+  CADICAL_assert (!walker.scores.empty ());
+  CADICAL_assert (walker.scores.size () <= (size_t) 2);
+  const double lim = sum * walker.random.generate_double ();
+  LOG ("score sum %g limit %g", sum, lim);
+  const auto end = clause.end ();
+  auto i = clause.begin ();
+  auto j = walker.scores.begin ();
+  int res = 0;
+  for (;;) {
+    CADICAL_assert (i != end);
+    res = *i++;
+    if (var (res).level > 1)
+      break;
+    LOG ("skipping assumption %d without score", -res);
+  }
+  sum = *j++;
+  while (sum <= lim && i != end) {
+    res = *i++;
+    if (var (res).level == 1) {
+      LOG ("skipping assumption %d without score", -res);
+      continue;
+    }
+    sum += *j++;
+  }
+  CADICAL_assert (res);
+  walker.scores.clear ();
+  LOG ("picking literal %d by break-count", res);
+  stats.ticks.walkpick += walker.ticks - old;
   return res;
 }
 
 /*------------------------------------------------------------------------*/
 
-void Internal::walk_flip_lit (Walker &walker, int lit) {
-
+// flips a literal unless we run out of ticks.
+bool Internal::walk_flip_lit (Walker &walker, int lit) {
+  START (walkflip);
+  const int64_t old = walker.ticks;
   require_mode (WALK);
   LOG ("flipping assign %d", lit);
   CADICAL_assert (val (lit) < 0);
@@ -254,39 +479,74 @@ void Internal::walk_flip_lit (Walker &walker, int lit) {
   set_val (idx, tmp);
   CADICAL_assert (val (lit) > 0);
 
+  // we are going to need it anyway and it probably still is in memory
+  const Watches &ws = watches (-lit);
+  if (!ws.empty ()) {
+    const Watch &w = ws[0];
+#ifndef WIN32
+    __builtin_prefetch (&w, 0, 1);
+#endif
+  }
+
   // Then remove 'c' and all other now satisfied (made) clauses.
   {
     // Simply go over all unsatisfied (broken) clauses.
 
     LOG ("trying to make %zd broken clauses", walker.broken.size ());
 
-    // We need to measure (and bound) the memory accesses during traversing
-    // broken clauses in terms of 'propagations'. This is tricky since we
-    // are not actually propagating literals.  Instead we use the clause
-    // variable 'ratio' as an approximation to the number of clauses used
-    // during propagating a literal.  Note that we use a one-watch scheme.
-    // Accordingly the number of broken clauses traversed divided by that
-    // ratio is an approximation of the number of propagation this would
-    // correspond to (in terms of memory access).  To eagerly update these
-    // statistics we simply increment the propagation counter after every
-    // 'ratio' traversed clause.  These propagations are particularly
-    // expensive if the number of broken clauses is large which usually
-    // happens initially.
-    //
-    const double ratio = clause_variable_ratio ();
     const auto eou = walker.broken.end ();
+    // broken is in cache given how central it is... but not always (see the
+    // ncc problems). Value was heuristically determined to give reasonnable
+    // values.
+    walker.ticks +=
+        1 + cache_lines (walker.broken.size (), sizeof (Clause *));
     auto j = walker.broken.begin (), i = j;
-#ifdef LOGGING
+#if defined(LOGGING) || !defined(CADICAL_NDEBUG)
     int64_t made = 0;
 #endif
-    int64_t count = 0;
 
     while (i != eou) {
 
-      Clause *d = *j++ = *i++;
+      ClauseOrBinary tagged = *j++ = *i++;
 
-      int *literals = d->literals, prev = 0;
+      if (tagged.is_binary ()) {
+        const TaggedBinary &b = tagged.tagged_binary ();
+        const int clit = b.lit;
+        const int other = b.other;
+        CADICAL_assert (val (clit) < 0 || val (other) < 0);
+#if defined(LOGGING)
+        CADICAL_assert (b.d->literals[0] == clit || b.d->literals[1] == clit);
+        CADICAL_assert (b.d->literals[0] == other || b.d->literals[1] == other);
+#endif
+        if (clit == lit || other == lit) {
+          LOG (b.d, "made");
+          const int first_lit = lit;
+          const int second_lit = clit ^ lit ^ other;
+#ifdef LOGGING
+          watch_binary_literal (first_lit, second_lit, b.d);
+#else
+          // placeholder for the clause, does not matter
+          watch_binary_literal (first_lit, second_lit, dummy_binary);
+#endif
 
+          ++walker.ticks;
+#if defined(LOGGING) || !defined(CADICAL_NDEBUG)
+          made++;
+#endif
+          j--;
+        } else {
+          LOG (b.d, "still broken");
+          CADICAL_assert (val (clit) < 0 && val (other) < 0);
+        }
+        continue;
+      }
+
+      // now the expansive part
+      Clause *d = tagged.clause ();
+      ++walker.ticks;
+      int *literals = d->literals;
+      LOG (d, "search for replacement");
+      int prev = 0;
       // Find 'lit' in 'd'.
       //
       const int size = d->size;
@@ -299,18 +559,17 @@ void Internal::walk_flip_lit (Walker &walker, int lit) {
           break;
         CADICAL_assert (val (other) < 0);
       }
-
       // If 'lit' is in 'd' then move it to the front to watch it.
       //
       if (prev == lit) {
         literals[0] = lit;
         LOG (d, "made");
         watch_literal (literals[0], literals[1], d);
-#ifdef LOGGING
+        ++walker.ticks;
+#if defined(LOGGING) || !defined(CADICAL_NDEBUG)
         made++;
 #endif
         j--;
-
       } else { // Otherwise the clause is not satisfied, undo shift.
 
         for (int i = size - 1; i >= 0; i--) {
@@ -319,41 +578,81 @@ void Internal::walk_flip_lit (Walker &walker, int lit) {
           prev = other;
         }
       }
-
-      if (count--)
-        continue;
-
-      // Update these counters eagerly.  Otherwise if we delay the update
-      // until all clauses are traversed, interrupting the solver has a high
-      // chance of giving bogus statistics on the number of 'propagations'
-      // in 'walk', if it is interrupted in this loop.
-
-      count = ratio; // Starting counting down again.
-      walker.propagations++;
-      stats.propagations.walk++;
+      LOG (d, "clause after undoing shift");
     }
-    LOG ("made %" PRId64 " clauses by flipping %d", made, lit);
+    CADICAL_assert ((int64_t) (j - walker.broken.begin ()) + made ==
+            (int64_t) walker.broken.size ());
     walker.broken.resize (j - walker.broken.begin ());
+    LOG ("made %" PRId64 " clauses by flipping %d, still %zu broken", made,
+         lit, walker.broken.size ());
+#ifndef CADICAL_NDEBUG
+    for (auto d : walker.broken) {
+      if (d.is_binary ()) {
+        const TaggedBinary &b = d.tagged_binary ();
+        CADICAL_assert (val (b.lit) < 0 && val (b.other) < 0);
+      } else {
+        for (auto lit : *d.clause ())
+          CADICAL_assert (val (lit) < 0);
+      }
+    }
+#endif
+    if (walker.ticks > walker.limit) {
+      STOP (walkflip);
+      return false;
+    }
   }
+
+  stats.ticks.walkflipbroken += walker.ticks - old;
+
+  const int64_t old_after_broken = walker.ticks;
 
   // Finally add all new unsatisfied (broken) clauses.
   {
-    walker.propagations++;     // This really corresponds now to one
-    stats.propagations.walk++; // propagation (in a one-watch scheme).
-
 #ifdef LOGGING
     int64_t broken = 0;
 #endif
     Watches &ws = watches (-lit);
+    // probably still in cache
+    walker.ticks += 1 + cache_lines (ws.size (), sizeof (Clause *));
 
     LOG ("trying to break %zd watched clauses", ws.size ());
 
     for (const auto &w : ws) {
       Clause *d = w.clause;
-      LOG (d, "unwatch %d in", -lit);
+      const bool binary = w.binary ();
+      if (binary) {
+        const int other = w.blit;
+        CADICAL_assert (w.blit != -lit);
+        if (val (other) > 0) {
+          LOG (d, "unwatch %d in", -lit);
+          watch_binary_literal (other, -lit, d);
+          ++walker.ticks;
+          continue;
+        }
+        LOG (d, "broken");
+#ifdef LOGGING
+        CADICAL_assert (d != dummy_binary);
+#endif
+        walker.broken.push_back (TaggedBinary (d, -lit, other));
+        ++walker.ticks;
+#ifdef LOGGING
+        broken++;
+#endif
+        continue;
+      }
+
+      if (walker.ticks > walker.limit) {
+        STOP (walkflip);
+        return false;
+      }
+      // now the expansive part
+      CADICAL_assert (d->size != 2);
+      ++walker.ticks;
       int *literals = d->literals, replacement = 0, prev = -lit;
-      CADICAL_assert (literals[0] == -lit);
+      CADICAL_assert (d->size == w.size);
       const int size = d->size;
+      CADICAL_assert (literals[0] == -lit);
+
       for (int i = 1; i < size; i++) {
         const int other = literals[i];
         CADICAL_assert (active (other));
@@ -366,19 +665,23 @@ void Internal::walk_flip_lit (Walker &walker, int lit) {
         break;
       }
       if (replacement) {
+        CADICAL_assert (-lit != replacement);
         literals[1] = -lit;
         literals[0] = replacement;
-        CADICAL_assert (-lit != replacement);
         watch_literal (replacement, -lit, d);
+        ++walker.ticks;
+        LOG (d, "found replacement");
       } else {
         for (int i = size - 1; i > 0; i--) { // undo shift
           const int other = literals[i];
           literals[i] = prev;
           prev = other;
         }
+
         CADICAL_assert (literals[0] == -lit);
         LOG (d, "broken");
         walker.broken.push_back (d);
+        ++walker.ticks;
 #ifdef LOGGING
         broken++;
 #endif
@@ -387,6 +690,10 @@ void Internal::walk_flip_lit (Walker &walker, int lit) {
     LOG ("broken %" PRId64 " clauses by flipping %d", broken, lit);
     ws.clear ();
   }
+  STOP (walkflip);
+  stats.ticks.walkflipWL += walker.ticks - old_after_broken;
+  stats.ticks.walkflip += walker.ticks - old;
+  return true;
 }
 
 /*------------------------------------------------------------------------*/
@@ -395,27 +702,64 @@ void Internal::walk_flip_lit (Walker &walker, int lit) {
 
 inline void Internal::walk_save_minimum (Walker &walker) {
   int64_t broken = walker.broken.size ();
-  if (broken >= stats.walk.minimum)
+  if (broken >= walker.minimum)
     return;
-  VERBOSE (3, "new global minimum %" PRId64 "", broken);
-  stats.walk.minimum = broken;
+  if (broken <= stats.walk.minimum) {
+    stats.walk.minimum = broken;
+    VERBOSE (3, "new global minimum %" PRId64 "", broken);
+  } else {
+    VERBOSE (3, "new walk minimum %" PRId64 "", broken);
+  }
+
+  walker.minimum = broken;
+
+#ifndef CADICAL_NDEBUG
   for (auto i : vars) {
     const signed char tmp = vals[i];
     if (tmp)
-      phases.min[i] = phases.saved[i] = tmp;
+      walker.current_best_model[i] = tmp;
+  }
+  if (walker.minimum == 0) {
+    for (auto c : clauses) {
+      if (c->garbage)
+        continue;
+      if (c->redundant)
+        continue;
+      int satisfied = 0;
+      for (const auto &lit : *c) {
+        const int tmp = internal->val (lit);
+        if (tmp > 0) {
+          LOG (c, "satisfied literal %d in", lit);
+          satisfied++;
+        }
+      }
+      CADICAL_assert (satisfied);
+    }
+  }
+#endif
+  if (walker.best_trail_pos == -1) {
+    VERBOSE (3, "saving the new walk minimum %" PRId64 "", broken);
+    for (auto i : vars) {
+      const signed char tmp = vals[i];
+      if (tmp) {
+        walker.best_values[i] = tmp;
+#ifndef CADICAL_NDEBUG
+        CADICAL_assert (tmp == walker.current_best_model[i]);
+#endif
+      } else {
+        CADICAL_assert (!active (i));
+      }
+    }
+    walker.best_trail_pos = 0;
+  } else {
+    walker.best_trail_pos = walker.flips.size ();
+    LOG ("new best trail position %u", walker.best_trail_pos);
   }
 }
 
 /*------------------------------------------------------------------------*/
 
 int Internal::walk_round (int64_t limit, bool prev) {
-
-  backtrack ();
-  if (propagated < trail.size () && !propagate ()) {
-    LOG ("empty clause after root level propagation");
-    learn_empty_clause ();
-    return 20;
-  }
 
   stats.walk.count++;
 
@@ -435,34 +779,15 @@ int Internal::walk_round (int64_t limit, bool prev) {
   }
 #endif
 
-  PHASE ("walk", stats.walk.count,
-         "random walk limit of %" PRId64 " propagations", limit);
-
-  // First compute the average clause size for picking the CB constant.
-  //
-  double size = 0;
-  int64_t n = 0;
-  for (const auto c : clauses) {
-    if (c->garbage)
-      continue;
-    if (c->redundant) {
-      if (!opts.walkredundant)
-        continue;
-      if (!likely_to_be_kept_clause (c))
-        continue;
-    }
-    size += c->size;
-    n++;
-  }
-  double average_size = relative (size, n);
-
-  PHASE ("walk", stats.walk.count,
-         "%" PRId64 " clauses average size %.2f over %d variables", n,
-         average_size, active ());
+  PHASE ("walk", stats.walk.count, "random walk limit of %" PRId64 " ticks",
+         limit);
 
   // Instantiate data structures for this local search round.
   //
-  Walker walker (internal, average_size, limit);
+  Walker walker (internal, limit);
+#ifndef CADICAL_QUIET
+  int old_global_minimum = stats.walk.minimum;
+#endif
 
   bool failed = false; // Inconsistent assumptions?
 
@@ -498,6 +823,8 @@ int Internal::walk_round (int64_t limit, bool prev) {
 
   if (!failed) {
 
+    // warmup stores the result in phases, not in target
+    const bool target = opts.warmup ? false : stable || opts.target == 2;
     for (auto idx : vars) {
       if (!active (idx)) {
         LOG ("skipping inactive variable %d", idx);
@@ -512,7 +839,7 @@ int Internal::walk_round (int64_t limit, bool prev) {
       if (prev)
         tmp = phases.prev[idx];
       if (!tmp)
-        tmp = sign (decide_phase (idx, true));
+        tmp = sign (decide_phase (idx, target));
       CADICAL_assert (tmp == 1 || tmp == -1);
       set_val (idx, tmp);
       CADICAL_assert (level == 2);
@@ -524,6 +851,9 @@ int Internal::walk_round (int64_t limit, bool prev) {
 #ifdef LOGGING
     int64_t watched = 0;
 #endif
+
+    double size = 0;
+    int64_t n = 0;
     for (const auto c : clauses) {
 
       if (c->garbage)
@@ -539,6 +869,8 @@ int Internal::walk_round (int64_t limit, bool prev) {
       int satisfied = 0;        // clause satisfied?
 
       int *lits = c->literals;
+      size += c->size;
+      n++;
       const int size = c->size;
 
       // Move to front satisfied literals and determine whether there
@@ -565,16 +897,31 @@ int Internal::walk_round (int64_t limit, bool prev) {
       }
 
       if (satisfied) {
-        watch_literal (lits[0], lits[1], c);
+        LOG (c, "pushing to satisfied");
+        if (c->size == 2)
+          watch_binary_literal (lits[0], lits[1], c);
+        else
+          watch_literal (lits[0], lits[1], c);
 #ifdef LOGGING
         watched++;
 #endif
       } else {
         CADICAL_assert (satisfiable); // at least one non-assumed variable ...
         LOG (c, "broken");
-        walker.broken.push_back (c);
+        CADICAL_assert (c->size == size);
+        if (size == 2)
+          walker.broken.push_back (TaggedBinary (c));
+        else
+          walker.broken.push_back (c);
       }
     }
+
+    double average_size = relative (size, n);
+    walker.populate_table (average_size);
+    PHASE ("walk", stats.walk.count,
+           "%" PRId64 " clauses average size %.2f over %d variables", n,
+           average_size, active ());
+
 #ifdef LOGGING
     if (!failed) {
       int64_t broken = walker.broken.size ();
@@ -586,13 +933,14 @@ int Internal::walk_round (int64_t limit, bool prev) {
 #endif
   }
 
-  int64_t old_global_minimum = stats.walk.minimum;
+  CADICAL_assert (failed || walker.table.size ());
 
   int res; // Tells caller to continue with local search.
 
   if (!failed) {
 
     int64_t broken = walker.broken.size ();
+    int64_t initial_minimum = broken;
 
     PHASE ("walk", stats.walk.count,
            "starting with %" PRId64 " unsatisfied clauses "
@@ -601,21 +949,25 @@ int Internal::walk_round (int64_t limit, bool prev) {
            stats.current.irredundant);
 
     walk_save_minimum (walker);
+    CADICAL_assert (stats.walk.minimum <= walker.minimum);
 
     int64_t minimum = broken;
 #ifndef CADICAL_QUIET
     int64_t flips = 0;
 #endif
     while (!terminated_asynchronously () && !walker.broken.empty () &&
-           walker.propagations < walker.limit) {
+           walker.ticks < walker.limit) {
 #ifndef CADICAL_QUIET
       flips++;
 #endif
       stats.walk.flips++;
       stats.walk.broken += broken;
-      Clause *c = walk_pick_clause (walker);
+      ClauseOrBinary c = walk_pick_clause (walker);
       const int lit = walk_pick_lit (walker, c);
-      walk_flip_lit (walker, lit);
+      bool finished = walk_flip_lit (walker, lit);
+      if (!finished)
+        break;
+      walker.push_flipped (lit);
       broken = walker.broken.size ();
       LOG ("now have %" PRId64 " broken clauses in total", broken);
       if (broken >= minimum)
@@ -626,33 +978,41 @@ int Internal::walk_round (int64_t limit, bool prev) {
       walk_save_minimum (walker);
     }
 
-    if (minimum < old_global_minimum)
+    walker.save_final_minimum (initial_minimum);
+
+#ifndef CADICAL_QUIET
+    if (minimum == initial_minimum) {
+      PHASE ("walk", internal->stats.walk.count,
+             "%sno improvement %" PRId64 "%s in %" PRId64 " flips and "
+             "%" PRId64 " ticks",
+             tout.bright_yellow_code (), minimum, tout.normal_code (),
+             flips, walker.ticks);
+    } else if (minimum < old_global_minimum)
       PHASE ("walk", stats.walk.count,
              "%snew global minimum %" PRId64 "%s in %" PRId64 " flips and "
-             "%" PRId64 " propagations",
+             "%" PRId64 " ticks",
              tout.bright_yellow_code (), minimum, tout.normal_code (),
-             flips, walker.propagations);
+             flips, walker.ticks);
     else
       PHASE ("walk", stats.walk.count,
              "best phase minimum %" PRId64 " in %" PRId64 " flips and "
-             "%" PRId64 " propagations",
-             minimum, flips, walker.propagations);
+             "%" PRId64 " ticks",
+             minimum, flips, walker.ticks);
 
     if (opts.profile >= 2) {
-      PHASE ("walk", stats.walk.count,
-             "%.2f million propagations per second",
-             relative (1e-6 * walker.propagations,
-                       time () - profiles.walk.started));
+      PHASE ("walk", stats.walk.count, "%.2f million ticks per second",
+             1e-6 *
+                 relative (walker.ticks, time () - profiles.walk.started));
 
       PHASE ("walk", stats.walk.count, "%.2f thousand flips per second",
              relative (1e-3 * flips, time () - profiles.walk.started));
 
     } else {
-      PHASE ("walk", stats.walk.count, "%.2f million propagations",
-             1e-6 * walker.propagations);
+      PHASE ("walk", stats.walk.count, "%.2f ticks", 1e-6 * walker.ticks);
 
       PHASE ("walk", stats.walk.count, "%.2f thousand flips", 1e-3 * flips);
     }
+#endif
 
     if (minimum > 0) {
       LOG ("minimum %" PRId64 " non-zero thus potentially continue",
@@ -671,8 +1031,6 @@ int Internal::walk_round (int64_t limit, bool prev) {
            "aborted due to inconsistent assumptions");
   }
 
-  copy_phases (phases.prev);
-
   for (auto idx : vars)
     if (active (idx))
       set_val (idx, 0);
@@ -689,20 +1047,48 @@ int Internal::walk_round (int64_t limit, bool prev) {
     force_phase_messages = false;
   }
 #endif
-
+  stats.ticks.walk += walker.ticks;
   return res;
 }
 
 void Internal::walk () {
   START_INNER_WALK ();
-  int64_t limit = stats.propagations.search;
+
+  backtrack ();
+  if (propagated < trail.size () && !propagate ()) {
+    LOG ("empty clause after root level propagation");
+    learn_empty_clause ();
+    STOP_INNER_WALK ();
+    return;
+  }
+
+  int res = 0;
+  if (opts.warmup)
+    res = warmup ();
+  if (res) {
+    LOG ("stopping walk due to warmup");
+    STOP_INNER_WALK ();
+    return;
+  }
+  const int64_t ticks = stats.ticks.search[0] + stats.ticks.search[1];
+  int64_t limit = ticks - last.walk.ticks;
+  VERBOSE (2,
+           "walk scheduling: last %" PRId64 " current %" PRId64
+           " delta %" PRId64,
+           last.walk.ticks, ticks, limit);
+  last.walk.ticks = ticks;
   limit *= 1e-3 * opts.walkeffort;
   if (limit < opts.walkmineff)
     limit = opts.walkmineff;
-  if (limit > opts.walkmaxeff)
-    limit = opts.walkmaxeff;
+  // local search is very cache friendly, so we actually really go over a
+  // lot of ticks
+  if (limit > 1e3 * opts.walkmaxeff) {
+    MSG ("reached maximum efficiency %" PRId64, limit);
+    limit = 1e3 * opts.walkmaxeff;
+  }
   (void) walk_round (limit, false);
   STOP_INNER_WALK ();
+  CADICAL_assert (!unsat);
 }
 
 } // namespace CaDiCaL
